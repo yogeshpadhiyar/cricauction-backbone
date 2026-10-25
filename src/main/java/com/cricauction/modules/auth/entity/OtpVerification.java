@@ -17,12 +17,15 @@ import java.time.Instant;
 public class OtpVerification {
 
     @Id
-    @Column(name = "mobile", nullable = false, length = 20)
-    private String mobile;
+    @Column(name = "identifier", nullable = false, length = 150)
+    private String identifier;
 
     @Id
     @Column(name = "purpose", nullable = false, length = 50)
     private String purpose;
+
+    @Column(name = "mobile", length = 20)
+    private String mobile;
 
     @Column(name = "otp_code", nullable = false, length = 10)
     private String otpCode;
@@ -37,6 +40,14 @@ public class OtpVerification {
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
+
+    @PrePersist
+    @PreUpdate
+    public void ensureIdentifier() {
+        if ((identifier == null || identifier.isBlank()) && mobile != null) {
+            identifier = mobile;
+        }
+    }
 
     public boolean isExpired() {
         return Instant.now().isAfter(expiresAt);

@@ -36,11 +36,8 @@ public class GoogleAuthServiceImpl implements GoogleAuthService {
         // 1. Verify Google ID token
         GoogleUserInfo googleUser = googleTokenVerifier.verifyToken(request.getIdToken());
 
-        // 2. Check if user already exists by Google ID or Email
-        Optional<User> existingUserOpt = userRepository.findByGoogleId(googleUser.getSub());
-        if (existingUserOpt.isEmpty()) {
-            existingUserOpt = userRepository.findByEmail(googleUser.getEmail());
-        }
+        // 2. Check if user already exists by Google ID or Email in a single consolidated query
+        Optional<User> existingUserOpt = userRepository.findByGoogleIdOrEmail(googleUser.getSub(), googleUser.getEmail());
 
         User user;
         if (existingUserOpt.isPresent()) {

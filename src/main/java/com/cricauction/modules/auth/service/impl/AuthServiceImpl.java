@@ -20,6 +20,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
+import java.util.Optional;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -33,25 +36,41 @@ public class AuthServiceImpl implements AuthService {
     private final com.cricauction.modules.auth.service.GoogleAuthService googleAuthService;
 
     @Override
-    @Transactional
     public SignUpResponse signUp(SignUpRequest request) {
         if (!request.getPassword().equals(request.getConfirmPassword())) {
             throw new BadRequestException("PASSWORDS_DO_NOT_MATCH", "Password and confirm password do not match.");
         }
 
-        if (userRepository.existsByEmail(request.getEmail().trim().toLowerCase())) {
-            throw new ConflictException("EMAIL_ALREADY_EXISTS", "An account with this email address already exists.");
+        String email = request.getEmail().trim().toLowerCase();
+        String mobile = request.getMobile().trim();
+
+        // 1. Single consolidated duplicate pre-check
+        List<Object[]> existing = userRepository.findExistingIdentifiers(email, mobile);
+        if (!existing.isEmpty()) {
+            for (Object[] row : existing) {
+                if (email.equalsIgnoreCase((String) row[0])) {
+                    throw new ConflictException("EMAIL_ALREADY_EXISTS", "An account with this email address already exists.");
+                }
+                if (mobile.equalsIgnoreCase((String) row[1])) {
+                    throw new ConflictException("MOBILE_ALREADY_EXISTS", "An account with this mobile number already exists.");
+                }
+            }
         }
 
-        if (userRepository.existsByMobile(request.getMobile().trim())) {
-            throw new ConflictException("MOBILE_ALREADY_EXISTS", "An account with this mobile number already exists.");
-        }
+        // 2. Compute BCrypt hash OUTSIDE database transaction (Zero connection holding during crypto)
+        String encodedPassword = passwordEncoder.encode(request.getPassword());
 
+        // 3. Persist user and trigger OTP
+        return persistNewUserAndSendOtp(request, email, mobile, encodedPassword);
+    }
+
+    @Transactional
+    public SignUpResponse persistNewUserAndSendOtp(SignUpRequest request, String email, String mobile, String encodedPassword) {
         User user = User.builder()
                 .fullName(request.getFullName().trim())
-                .email(request.getEmail().trim().toLowerCase())
-                .mobile(request.getMobile().trim())
-                .passwordHash(passwordEncoder.encode(request.getPassword()))
+                .email(email)
+                .mobile(mobile)
+                .passwordHash(encodedPassword)
                 .activeRole(UserRole.PLAYER)
                 .isMobileVerified(false)
                 .isActive(true)
@@ -72,12 +91,12 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    @Transactional
     public AuthResponse signIn(SignInRequest request) {
         String identifier = request.getIdentifier().trim();
         User user = userRepository.findByIdentifier(identifier)
                 .orElseThrow(() -> new UnauthorizedException("INVALID_CREDENTIALS", "Invalid email/mobile or password."));
 
+        // Match password with ZERO database connection held
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
             throw new UnauthorizedException("INVALID_CREDENTIALS", "Invalid email/mobile or password.");
         }
@@ -99,21 +118,51 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public SendOtpResponse sendOtp(SendOtpRequest request) {
-        return otpService.sendOtp(request.getMobile().trim(), request.getPurpose());
+        String target = request.getTargetIdentifier();
+        if (target == null || target.isBlank()) {
+            throw new BadRequestException("INVALID_IDENTIFIER", "Target mobile number or email is required.");
+        }
+        return otpService.sendOtp(target, request.getPurpose());
     }
 
     @Override
     @Transactional
     public VerifyOtpResponse verifyOtp(VerifyOtpRequest request) {
-        String mobile = request.getMobile().trim();
-        String purpose = request.getPurpose().trim().toLowerCase();
+        String target = request.getTargetIdentifier();
+        if (target == null || target.isBlank()) {
+            throw new BadRequestException("INVALID_IDENTIFIER", "Target mobile number or email is required.");
+        }
+        String purpose = request.getPurpose() != null ? request.getPurpose().trim().toLowerCase() : "login";
 
         // 1. Verify OTP code
-        otpService.verifyOtp(mobile, request.getOtp(), purpose);
+        otpService.verifyOtp(target, request.getOtp(), purpose);
 
         // 2. Fetch associated user
-        User user = userRepository.findByMobile(mobile)
-                .orElseThrow(() -> new ResourceNotFoundException("USER_NOT_FOUND", "No user found with mobile " + mobile));
+        Optional<User> userOpt = userRepository.findByIdentifier(target);
+
+        if ("login".equalsIgnoreCase(purpose)) {
+            User user = userOpt.orElseGet(() -> {
+                boolean isEmail = target.contains("@");
+                User newUser = User.builder()
+                        .fullName(isEmail ? target.substring(0, target.indexOf("@")) : "User " + target.substring(Math.max(0, target.length() - 4)))
+                        .email(isEmail ? target : null)
+                        .mobile(isEmail ? null : target)
+                        .activeRole(UserRole.PLAYER)
+                        .isEmailVerified(isEmail)
+                        .isMobileVerified(!isEmail)
+                        .isActive(true)
+                        .build();
+                return userRepository.save(newUser);
+            });
+
+            String accessToken = jwtTokenProvider.generateAccessToken(user);
+            return VerifyOtpResponse.builder()
+                    .isVerified(true)
+                    .accessToken(accessToken)
+                    .build();
+        }
+
+        User user = userOpt.orElseThrow(() -> new ResourceNotFoundException("USER_NOT_FOUND", "No user found with identifier " + target));
 
         if ("password_reset".equalsIgnoreCase(purpose)) {
             String resetToken = tokenService.createPasswordResetToken(user);
@@ -122,8 +171,12 @@ public class AuthServiceImpl implements AuthService {
                     .resetToken(resetToken)
                     .build();
         } else {
-            // "signup_verification" or general mobile verification
-            user.setMobileVerified(true);
+            // "signup_verification" or general verification
+            if (target.contains("@")) {
+                user.setEmailVerified(true);
+            } else {
+                user.setMobileVerified(true);
+            }
             userRepository.save(user);
 
             String accessToken = jwtTokenProvider.generateAccessToken(user);
@@ -136,6 +189,59 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     @Transactional
+    public AuthResponse loginWithOtp(OtpLoginRequest request) {
+        String target = request.getIdentifier().trim().toLowerCase();
+        otpService.verifyOtp(target, request.getOtp(), "login");
+
+        Optional<User> userOpt = userRepository.findByIdentifier(target);
+        User user;
+        if (userOpt.isPresent()) {
+            user = userOpt.get();
+            if (!user.isActive()) {
+                throw new UnauthorizedException("ACCOUNT_SUSPENDED", "Your account has been deactivated. Please contact support.");
+            }
+            if (target.contains("@") && !user.isEmailVerified()) {
+                user.setEmailVerified(true);
+                user = userRepository.save(user);
+            } else if (!target.contains("@") && !user.isMobileVerified()) {
+                user.setMobileVerified(true);
+                user = userRepository.save(user);
+            }
+        } else {
+            UserRole role = UserRole.PLAYER;
+            if (request.getRole() != null && !request.getRole().isBlank()) {
+                try {
+                    role = UserRole.fromString(request.getRole());
+                } catch (Exception ignored) {}
+            }
+
+            boolean isEmail = target.contains("@");
+            user = User.builder()
+                    .fullName(isEmail ? target.substring(0, target.indexOf("@")) : "User " + target.substring(Math.max(0, target.length() - 4)))
+                    .email(isEmail ? target : null)
+                    .mobile(isEmail ? null : target)
+                    .activeRole(role)
+                    .city(request.getCity())
+                    .authProvider(com.cricauction.modules.auth.entity.enums.AuthProvider.LOCAL)
+                    .isEmailVerified(isEmail)
+                    .isMobileVerified(!isEmail)
+                    .isActive(true)
+                    .build();
+            user = userRepository.save(user);
+        }
+
+        String accessToken = jwtTokenProvider.generateAccessToken(user);
+        String refreshToken = tokenService.createRefreshToken(user);
+
+        return AuthResponse.builder()
+                .accessToken(accessToken)
+                .refreshToken(refreshToken)
+                .expiresIn(jwtTokenProvider.getAccessTokenExpirationSeconds())
+                .user(UserProfileResponse.fromEntity(user))
+                .build();
+    }
+
+    @Override
     public ForgotPasswordResponse forgotPassword(ForgotPasswordRequest request) {
         String identifier = request.getIdentifier().trim();
         User user = userRepository.findByIdentifier(identifier)

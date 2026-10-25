@@ -10,6 +10,6 @@ import java.io.Serializable;
 @NoArgsConstructor
 @AllArgsConstructor
 public class OtpVerificationId implements Serializable {
-    private String mobile;
+    private String identifier;
     private String purpose;
 }

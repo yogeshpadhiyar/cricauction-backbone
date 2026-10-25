@@ -20,6 +20,8 @@ import java.time.Duration;
 public class GoogleTokenVerifierImpl implements GoogleTokenVerifier {
 
     private final ObjectMapper objectMapper;
+    private final com.cricauction.common.resilience.CircuitBreaker circuitBreaker;
+    private final com.cricauction.common.resilience.ResilienceRetry resilienceRetry;
 
     @Value("${cricauction.security.google.client-id:}")
     private String expectedClientId;
@@ -47,16 +49,18 @@ public class GoogleTokenVerifierImpl implements GoogleTokenVerifier {
             return parseMockToken(idToken);
         }
 
-        try {
-            String response = restClient.get()
-                    .uri(uriBuilder -> uriBuilder
-                            .path("/tokeninfo")
-                            .queryParam("id_token", idToken.trim())
-                            .build())
-                    .retrieve()
-                    .body(String.class);
+        return circuitBreaker.execute("GoogleOAuth", () ->
+                resilienceRetry.executeWithRetry("GoogleTokenInfoCall", () -> {
+                    try {
+                        String response = restClient.get()
+                                .uri(uriBuilder -> uriBuilder
+                                        .path("/tokeninfo")
+                                        .queryParam("id_token", idToken.trim())
+                                        .build())
+                                .retrieve()
+                                .body(String.class);
 
-            JsonNode root = objectMapper.readTree(response);
+                        JsonNode root = objectMapper.readTree(response);
 
             // Verify audience if configured
             if (expectedClientId != null && !expectedClientId.isBlank()) {
@@ -78,20 +82,21 @@ public class GoogleTokenVerifierImpl implements GoogleTokenVerifier {
                 throw new UnauthorizedException("INVALID_GOOGLE_TOKEN", "Google token missing required claims (email or sub).");
             }
 
-            return GoogleUserInfo.builder()
-                    .sub(sub)
-                    .email(email.toLowerCase().trim())
-                    .emailVerified(emailVerified)
-                    .name(name)
-                    .picture(picture)
-                    .build();
+                    return GoogleUserInfo.builder()
+                            .sub(sub)
+                            .email(email.toLowerCase().trim())
+                            .emailVerified(emailVerified)
+                            .name(name)
+                            .picture(picture)
+                            .build();
 
-        } catch (UnauthorizedException e) {
-            throw e;
-        } catch (Exception e) {
-            log.error("Failed to verify Google token with Google OAuth2 servers: {}", e.getMessage());
-            throw new UnauthorizedException("INVALID_GOOGLE_TOKEN", "Invalid or expired Google token: " + e.getMessage());
-        }
+                } catch (UnauthorizedException e) {
+                    throw e;
+                } catch (Exception e) {
+                    log.error("Failed to verify Google token with Google OAuth2 servers: {}", e.getMessage());
+                    throw new UnauthorizedException("INVALID_GOOGLE_TOKEN", "Invalid or expired Google token: " + e.getMessage());
+                }
+            }), null);
     }
 
     private GoogleUserInfo parseMockToken(String mockToken) {

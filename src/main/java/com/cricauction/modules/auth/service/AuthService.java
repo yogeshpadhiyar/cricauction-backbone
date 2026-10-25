@@ -16,4 +16,5 @@ public interface AuthService {
     UserProfileResponse getCurrentUser(UserPrincipal currentUser);
     RoleResponse switchRole(UserPrincipal currentUser, RoleSelectionRequest request);
     AuthResponse authenticateWithGoogle(GoogleAuthRequest request);
+    AuthResponse loginWithOtp(OtpLoginRequest request);
 }

@@ -14,9 +14,16 @@ import java.util.Optional;
 @Repository
 public interface OtpVerificationRepository extends JpaRepository<OtpVerification, OtpVerificationId> {
 
-    Optional<OtpVerification> findByMobileAndPurpose(String mobile, String purpose);
+    Optional<OtpVerification> findByIdentifierAndPurpose(String identifier, String purpose);
 
-    void deleteByMobileAndPurpose(String mobile, String purpose);
+    void deleteByIdentifierAndPurpose(String identifier, String purpose);
+
+    @Query("SELECT o FROM OtpVerification o WHERE (o.identifier = :mobile OR o.mobile = :mobile) AND o.purpose = :purpose")
+    Optional<OtpVerification> findByMobileAndPurpose(@Param("mobile") String mobile, @Param("purpose") String purpose);
+
+    @Modifying
+    @Query("DELETE FROM OtpVerification o WHERE (o.identifier = :mobile OR o.mobile = :mobile) AND o.purpose = :purpose")
+    void deleteByMobileAndPurpose(@Param("mobile") String mobile, @Param("purpose") String purpose);
 
     @Modifying
     @Query("DELETE FROM OtpVerification o WHERE o.expiresAt < :now")

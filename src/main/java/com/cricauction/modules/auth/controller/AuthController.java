@@ -54,6 +54,17 @@ public class AuthController {
     }
 
     /**
+     * Passwordless Login via Mobile + OTP or Email ID + OTP
+     * POST /api/v1/auth/otp/login
+     * POST /api/v1/auth/login/otp
+     */
+    @PostMapping(value = {"/otp/login", "/login/otp"})
+    public ResponseEntity<ApiResponse<AuthResponse>> loginWithOtp(@Valid @RequestBody OtpLoginRequest request) {
+        AuthResponse response = authService.loginWithOtp(request);
+        return ResponseEntity.ok(ApiResponse.success("Logged in successfully via OTP", response));
+    }
+
+    /**
      * 3. Send / Resend OTP
      * POST /api/v1/auth/otp/send
      */
@@ -61,7 +72,7 @@ public class AuthController {
     public ResponseEntity<ApiResponse<SendOtpResponse>> sendOtp(@Valid @RequestBody SendOtpRequest request) {
         SendOtpResponse response = authService.sendOtp(request);
         return ResponseEntity.ok(ApiResponse.success(
-                "OTP sent successfully to " + request.getMobile(), response));
+                "OTP sent successfully to " + request.getTargetIdentifier(), response));
     }
 
     /**

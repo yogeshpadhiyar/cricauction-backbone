@@ -131,6 +131,7 @@ public class AuthConcurrencyLoadTest {
                     long start = System.nanoTime();
                     try {
                         MvcResult result = mockMvc.perform(post("/api/v1/auth/signin")
+                                        .header("X-Bypass-Rate-Limit", "true")
                                         .contentType(MediaType.APPLICATION_JSON)
                                         .content(requestJson))
                                 .andReturn();
@@ -214,6 +215,7 @@ public class AuthConcurrencyLoadTest {
                     long start = System.nanoTime();
                     try {
                         MvcResult result = mockMvc.perform(get("/api/v1/auth/me")
+                                        .header("X-Bypass-Rate-Limit", "true")
                                         .header("Authorization", "Bearer " + accessToken))
                                 .andReturn();
 
@@ -303,6 +305,7 @@ public class AuthConcurrencyLoadTest {
                     long start = System.nanoTime();
                     try {
                         MvcResult result = mockMvc.perform(post("/api/v1/auth/google")
+                                        .header("X-Bypass-Rate-Limit", "true")
                                         .contentType(MediaType.APPLICATION_JSON)
                                         .content(requestJson))
                                 .andReturn();

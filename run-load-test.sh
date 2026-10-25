@@ -5,12 +5,10 @@
 
 set -e
 
-# Detect Homebrew Java 23 if JAVA_HOME is not set
-if [ -z "$JAVA_HOME" ]; then
-    if [ -d "/opt/homebrew/opt/openjdk" ]; then
-        export JAVA_HOME="/opt/homebrew/opt/openjdk"
-        export PATH="$JAVA_HOME/bin:$PATH"
-    fi
+# Set OpenJDK 23
+if [ -d "/opt/homebrew/opt/openjdk" ]; then
+    export JAVA_HOME="/opt/homebrew/opt/openjdk"
+    export PATH="$JAVA_HOME/bin:$PATH"
 fi
 
 echo "================================================================================"

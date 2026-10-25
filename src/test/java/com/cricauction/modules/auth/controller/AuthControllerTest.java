@@ -177,6 +177,7 @@ class AuthControllerTest {
 
         // Seed OTP
         otpRepository.save(OtpVerification.builder()
+                .identifier("+919876543210")
                 .mobile("+919876543210")
                 .purpose("signup_verification")
                 .otpCode("482910")

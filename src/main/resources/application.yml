@@ -18,7 +18,7 @@ spring:
 
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:cricauction}
-    username: ${DB_USER:}
+    username: ${DB_USER:yogeshkumarpadhiyar}
     password: ${DB_PASSWORD:}
     driver-class-name: org.postgresql.Driver
     hikari:
@@ -52,6 +52,7 @@ spring:
 
 cricauction:
   security:
+    bcrypt-strength: ${BCRYPT_STRENGTH:10}
     jwt:
       secret: ${JWT_SECRET:cricauction_very_long_secure_secret_key_that_exceeds_256_bits_for_hmac_sha256!}
       access-token-expiration-ms: 86400000 # 24 hours (86400s)

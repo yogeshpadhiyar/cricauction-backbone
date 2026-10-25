@@ -12,11 +12,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Slf4j
 @Service
@@ -25,7 +25,6 @@ public class OtpServiceImpl implements OtpService {
 
     private final OtpVerificationRepository otpRepository;
     private final List<OtpDeliveryStrategy> deliveryStrategies;
-    private final SecureRandom secureRandom = new SecureRandom();
 
     @Value("${cricauction.otp.expiration-seconds:300}")
     private int otpExpirationSeconds;
@@ -37,11 +36,16 @@ public class OtpServiceImpl implements OtpService {
 
     @Override
     @Transactional
-    public SendOtpResponse sendOtp(String mobile, String purpose) {
-        String normalizedPurpose = purpose != null ? purpose.trim().toLowerCase() : "signup_verification";
+    public SendOtpResponse sendOtp(String identifier, String purpose) {
+        if (identifier == null || identifier.isBlank()) {
+            throw new BadRequestException("INVALID_IDENTIFIER", "Target mobile number or email is required.");
+        }
 
-        // Check if an existing active OTP was sent recently (cooldown throttle)
-        Optional<OtpVerification> existingOpt = otpRepository.findByMobileAndPurpose(mobile, normalizedPurpose);
+        String target = identifier.trim().toLowerCase();
+        String normalizedPurpose = purpose != null ? purpose.trim().toLowerCase() : "login";
+
+        // Check cooldown throttle
+        Optional<OtpVerification> existingOpt = otpRepository.findByIdentifierAndPurpose(target, normalizedPurpose);
         if (existingOpt.isPresent()) {
             OtpVerification existing = existingOpt.get();
             long secondsSinceCreation = Duration.between(existing.getCreatedAt(), Instant.now()).getSeconds();
@@ -52,13 +56,14 @@ public class OtpServiceImpl implements OtpService {
             }
         }
 
-        // Generate 6-digit numeric OTP
-        String otpCode = String.format("%06d", secureRandom.nextInt(1_000_000));
+        // Generate 6-digit numeric OTP using lock-free ThreadLocalRandom
+        String otpCode = String.format("%06d", ThreadLocalRandom.current().nextInt(1_000_000));
         Instant expiresAt = Instant.now().plusSeconds(otpExpirationSeconds);
 
         OtpVerification otpVerification = existingOpt.orElseGet(() ->
                 OtpVerification.builder()
-                        .mobile(mobile)
+                        .identifier(target)
+                        .mobile(target.contains("@") ? null : target)
                         .purpose(normalizedPurpose)
                         .build()
         );
@@ -68,8 +73,8 @@ public class OtpServiceImpl implements OtpService {
         otpVerification.setExpiresAt(expiresAt);
         otpRepository.save(otpVerification);
 
-        // Dispatch via Strategy
-        dispatchOtp(mobile, otpCode, normalizedPurpose);
+        // Dispatch via Strategy (SMS or EMAIL depending on identifier format)
+        dispatchOtp(target, otpCode, normalizedPurpose);
 
         return SendOtpResponse.builder()
                 .retryAfterSeconds(retryAfterSeconds)
@@ -79,19 +84,27 @@ public class OtpServiceImpl implements OtpService {
 
     @Override
     @Transactional
-    public boolean verifyOtp(String mobile, String otp, String purpose) {
-        String normalizedPurpose = purpose != null ? purpose.trim().toLowerCase() : "signup_verification";
+    public boolean verifyOtp(String identifier, String otp, String purpose) {
+        if (identifier == null || identifier.isBlank()) {
+            throw new BadRequestException("INVALID_IDENTIFIER", "Mobile number or email is required.");
+        }
+        if (otp == null || otp.isBlank()) {
+            throw new BadRequestException("INVALID_OTP", "OTP code cannot be empty.");
+        }
 
-        OtpVerification verification = otpRepository.findByMobileAndPurpose(mobile, normalizedPurpose)
-                .orElseThrow(() -> new BadRequestException("INVALID_OTP", "No active OTP found for this mobile number."));
+        String target = identifier.trim().toLowerCase();
+        String normalizedPurpose = purpose != null ? purpose.trim().toLowerCase() : "login";
+
+        OtpVerification verification = otpRepository.findByIdentifierAndPurpose(target, normalizedPurpose)
+                .orElseThrow(() -> new BadRequestException("INVALID_OTP", "No active OTP found for " + target));
 
         if (verification.isExpired()) {
-            otpRepository.deleteByMobileAndPurpose(mobile, normalizedPurpose);
+            otpRepository.deleteByIdentifierAndPurpose(target, normalizedPurpose);
             throw new BadRequestException("OTP_EXPIRED", "OTP has expired. Please request a new OTP.");
         }
 
         if (verification.getAttempts() >= MAX_ATTEMPTS) {
-            otpRepository.deleteByMobileAndPurpose(mobile, normalizedPurpose);
+            otpRepository.deleteByIdentifierAndPurpose(target, normalizedPurpose);
             throw new BadRequestException("MAX_ATTEMPTS_EXCEEDED", "Maximum verification attempts exceeded. Please request a new OTP.");
         }
 
@@ -103,7 +116,7 @@ public class OtpServiceImpl implements OtpService {
         }
 
         // OTP verified successfully -> cleanup record
-        otpRepository.deleteByMobileAndPurpose(mobile, normalizedPurpose);
+        otpRepository.deleteByIdentifierAndPurpose(target, normalizedPurpose);
         return true;
     }
 
@@ -112,14 +125,14 @@ public class OtpServiceImpl implements OtpService {
         return otpExpirationSeconds;
     }
 
-    private void dispatchOtp(String mobile, String otpCode, String purpose) {
-        // Strategy selection: find strategy supporting SMS
+    private void dispatchOtp(String recipient, String otpCode, String purpose) {
+        String channel = (recipient != null && recipient.contains("@")) ? "EMAIL" : "SMS";
         deliveryStrategies.stream()
-                .filter(strategy -> strategy.supports("SMS"))
+                .filter(strategy -> strategy.supports(channel))
                 .findFirst()
                 .ifPresentOrElse(
-                        strategy -> strategy.sendOtp(mobile, otpCode, purpose),
-                        () -> log.warn("No OTP delivery strategy found for SMS")
+                        strategy -> strategy.sendOtp(recipient, otpCode, purpose),
+                        () -> log.warn("No OTP delivery strategy found for channel [{}]", channel)
                 );
     }
 }

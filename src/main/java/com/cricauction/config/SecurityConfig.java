@@ -30,6 +30,7 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthFilter;
+    private final com.cricauction.common.resilience.RateLimitingFilter rateLimitingFilter;
     private final AuthenticationProvider authenticationProvider;
     private final ObjectMapper objectMapper;
 
@@ -44,6 +45,7 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/api/v1/auth/signup",
                                 "/api/v1/auth/signin",
+                                "/api/v1/auth/login/**",
                                 "/api/v1/auth/google/**",
                                 "/api/v1/auth/otp/**",
                                 "/api/v1/auth/password/**",
@@ -76,6 +78,7 @@ public class SecurityConfig {
                             response.getOutputStream().println(objectMapper.writeValueAsString(apiResponse));
                         })
                 )
+                .addFilterBefore(rateLimitingFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
