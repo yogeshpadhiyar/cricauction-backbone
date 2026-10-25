@@ -107,7 +107,7 @@ erDiagram
 
 | Table Name | Type | Key Columns | Primary Responsibility |
 |---|---|---|---|
-| `users` | Standard WAL | `id`, `full_name`, `email`, `mobile`, `password_hash`, `active_role`, `auth_provider`, `google_id`, `is_email_verified`, `is_mobile_verified`, `city`, `profile_photo_url` | Core user entity and auth credentials across all roles. |
+| `users` | Standard WAL | `id`, `full_name`, `email`, `mobile`, `password_hash`, `active_role`, `auth_provider`, `google_id`, `is_email_verified`, `is_mobile_verified`, `city`, `profile_photo_url`, `bio` | Core user entity and auth credentials across all roles. |
 | `otp_verifications` | Standard WAL | `(identifier, purpose)`, `otp_code`, `attempts`, `expires_at` | TTL-based OTP records supporting mobile numbers and email addresses. |
 | `refresh_tokens` | Standard WAL | `id`, `token`, `user_id`, `expires_at`, `revoked` | Cryptographic refresh tokens for rotating JWT access tokens. |
 | `password_reset_tokens` | Standard WAL | `token`, `user_id`, `expires_at`, `used` | Single-use password reset verification tokens. |
@@ -128,7 +128,8 @@ erDiagram
 - `V1__init_auth_schema.sql`: Auth, users, OTP, refresh tokens, password reset tokens.
 - `V2__add_google_auth.sql`: Google OAuth columns (`auth_provider`, `google_id`, `is_email_verified`, nullable mobile & password).
 - `V3__support_email_and_mobile_otp_login.sql`: Unified `identifier` column supporting mobile number and email OTP verification.
-- *Pending V4+*: Player profiles, tournaments, tournament settings, teams, tournament players, squads, live auction unlogged state, bids ledger, matches, scorecards, and notifications.
+- `V4__add_bio_and_player_profiles.sql`: Added `bio` to `users` and created `player_profiles` table with foreign key `ON DELETE CASCADE` and index `idx_player_profiles_role`.
+- *Pending V5+*: Tournaments, tournament settings, teams, tournament players, squads, live auction unlogged state, bids ledger, matches, scorecards, and notifications.
 
 ---
 
@@ -142,7 +143,7 @@ WebSocket Gateway: /ws/v1/auction
 ### Module 1: Authentication & Authorization (10 APIs) — `[COMPLETED & OPTIMIZED]`
 - Benchmark: 5,000 full concurrent user flows in **4.72 seconds** (1,059.55 flows/sec) on actual PostgreSQL.
 - Total persisted users: **21,486**.
-- Reference: `MODULE_1_AUTHENTICATION_IMPLEMENTATION.md` & `MODULE_1_PHASE_1_LATENCY_OPTIMIZATION.md`.
+- Reference: `MODULE_1_AUTHENTICATION_AND_SECURITY_MASTER_GUIDE.md`.
 
 | # | Method | Endpoint | Access | Purpose | Status |
 |---|---|---|---|---|---|
@@ -157,13 +158,19 @@ WebSocket Gateway: /ws/v1/auction
 | 9 | `POST` | `/auth/refresh-token` | Public | Rotate refresh token for new access JWT | Completed |
 | 10 | `POST` | `/auth/logout` | Authenticated | Revoke refresh token | Completed |
 
-### Module 2: Profile & Cricket Profile Management (4 APIs) — `[READY FOR DEV]`
+### Module 2: Profile & Cricket Profile Management (4 APIs) — `[COMPLETED & OPTIMIZED]`
+- Benchmark: 5,000 concurrent profile requests in **1.48 seconds** (3,373.82 req/sec) on actual PostgreSQL.
+- Total persisted player profiles: **1,250**.
+- Total users with bio updated: **1,250**.
+- Master Guide: `MODULE_2_PROFILE_MANAGEMENT_MASTER_GUIDE.md`.
+- Concurrency Runner: `run-5000-users-profile-automation.sh`.
+
 | # | Method | Endpoint | Access | Purpose | Status |
 |---|---|---|---|---|---|
-| 11 | `GET` | `/users/profile` | Authenticated | Retrieve current user profile | Planned |
-| 12 | `PATCH` | `/users/profile` | Authenticated | Update user basic details | Planned |
-| 13 | `POST` | `/users/profile/photo` | Authenticated | Upload user profile picture to S3 | Planned |
-| 14 | `PUT` | `/users/player-profile` | Authenticated (Player) | Update cricket bio, stats, and CricHeroes link | Planned |
+| 11 | `GET` | `/users/profile` | Authenticated | Retrieve current user profile | Completed |
+| 12 | `PATCH` | `/users/profile` | Authenticated | Update user basic details & bio | Completed |
+| 13 | `POST` | `/users/profile/photo` | Authenticated | Upload user profile avatar via Storage Strategy | Completed |
+| 14 | `PUT` | `/users/player-profile` | Authenticated | Idempotent upsert of cricket bio & statistics | Completed |
 
 ### Module 3: Role-Specific Dashboards (3 APIs) — `[READY FOR DEV]`
 | # | Method | Endpoint | Access | Purpose | Status |
@@ -266,7 +273,7 @@ SOLID Principles Application Matrix:
 │   └── Clean DTOs: Strict separation between Request, Response, and Persistence Entities.
 │
 ├── Open/Closed Principle (OCP)
-│   ├── Strategy Interfaces: Open for extension without altering core logic (e.g., OtpDeliveryStrategy, PushNotificationStrategy).
+│   ├── Strategy Interfaces: Open for extension without altering core logic (e.g., OtpDeliveryStrategy, FileStorageStrategy).
 │   └── Event Listeners: Asynchronous event handling open for new listener additions without editing publishers.
 │
 ├── Liskov Substitution Principle (LSP)
@@ -280,7 +287,7 @@ SOLID Principles Application Matrix:
 ```
 
 ### Design Patterns Registry
-1. **Strategy Pattern**: Multi-channel delivery for OTP (`SmsOtpDeliveryStrategy`, `EmailOtpDeliveryStrategy`), Push Notifications (`FcmPushStrategy`, `ApnsPushStrategy`), and auction sorting.
+1. **Strategy Pattern**: Multi-channel delivery for OTP (`SmsOtpDeliveryStrategy`, `EmailOtpDeliveryStrategy`), File/Avatar Storage (`FileStorageStrategy`, `LocalFileStorageStrategy`, `S3FileStorageStrategy`), and auction sorting.
 2. **State Pattern**: Managing lifecycle states of Tournaments (`DRAFT` -> `PUBLISHED` -> `AUCTION_LIVE` -> `COMPLETED`) and Matches (`UPCOMING` -> `LIVE` -> `COMPLETED`).
 3. **Observer / Pub-Sub Pattern**: Spring STOMP WebSocket broadcasting + internal Spring Application Events for decoupled side-effects (e.g., sending email upon player sold).
 4. **Advisory Locking Pattern**: PostgreSQL-native `pg_advisory_xact_lock` guaranteeing mutual exclusion of concurrent bids per tournament.
@@ -293,7 +300,7 @@ SOLID Principles Application Matrix:
 
 For **every development task** going forward:
 1. **Design Before Coding**: Verify entity relationships, DB migration requirements, and SOLID contracts.
-2. **Standard Implementation Artifact**: Immediately upon completing a module or significant feature increment, create a dedicated markdown file (e.g., `MODULE_<NUMBER>_<NAME>_IMPLEMENTATION.md`) detailing:
+2. **Standard Implementation Artifact**: Immediately upon completing a module or significant feature increment, create a dedicated master guide (e.g., `MODULE_<NUMBER>_<NAME>_MASTER_GUIDE.md`) detailing:
    - Architectural thinking, logic, and rationale.
    - SOLID principles applied and design pattern justifications.
    - Request/response schemas, DTOs, and database tables added or modified.

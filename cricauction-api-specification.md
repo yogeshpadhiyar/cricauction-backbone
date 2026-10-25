@@ -1606,3 +1606,228 @@ sequenceDiagram
 | **8** | Fixtures, Scoring & Standings | **5** | Organizer, Captain, Player |
 | **9** | Notifications & Push Messaging | **4** | All Roles |
 | **Total** | **Full System REST Endpoints** | **62 APIs** | *(+ 8 WebSocket Events)* |
+
+---
+
+## 5. Comprehensive Module-Based API Categorization, Functional Uses & Execution Roadmap
+
+This section maps all **62 REST Endpoints (+ 8 WebSocket Events)** across domain modules, provides their exact real-world functional use cases within the CricAuction mobile/web apps, and lays out the architectural dependency order to decide which module to develop next.
+
+---
+
+### Module 1: Authentication & Authorization (10 APIs)
+*Domain Scope: User identity, omni-channel sign-in/up, OTP verification, JWT session tokens, dynamic role switching.*  
+*Status: **COMPLETED & OPTIMIZED** (Verified under 5,000 concurrent user benchmark)*
+
+| # | HTTP Method & Route | Target Role | Functional Use Case & Real-World Trigger | Database Entities Impacted | Status |
+|:---:|:---|:---:|:---|:---|:---:|
+| **1** | `POST /auth/signup` | Public | **New User Registration Screen**: Mobile/Web user inputs full name, email, mobile, and password. Dispatches verification OTP. | `users`, `otp_verifications` | Completed |
+| **2** | `POST /auth/signin` | Public | **Credential Login Screen**: Returning user logs in with email or mobile + password. Returns JWT access token & refresh token. | `users`, `refresh_tokens` | Completed |
+| **3** | `POST /auth/otp/send` | Public | **OTP Dispatch Trigger**: Triggered when requesting SMS/Email OTP for login, phone verification, or password recovery. Enforces 45s cooldown. | `otp_verifications` | Completed |
+| **4** | `POST /auth/otp/verify` | Public | **OTP Input Screen**: Verifies 6-digit verification code. If valid, confirms user contact or yields single-use password reset token. | `otp_verifications` | Completed |
+| **5** | `POST /auth/otp/login` | Public | **Passwordless Login Screen**: User enters mobile or email + received OTP. Completes login and auto-provisions new user accounts seamlessly. | `users`, `otp_verifications`, `refresh_tokens` | Completed |
+| **6** | `POST /auth/google` | Public | **Google One-Tap / SDK Login**: Direct OAuth2 sign-in/sign-up. Verifies Google ID token, links existing accounts or provisions new users. | `users`, `refresh_tokens` | Completed |
+| **7** | `POST /auth/password/forgot` | Public | **Forgot Password Screen**: User requests password recovery. Dispatches OTP to registered mobile/email. | `users`, `otp_verifications` | Completed |
+| **8** | `POST /auth/password/reset` | Public | **Set New Password Screen**: Consumes verified reset token and securely updates user password hash (BCrypt). | `users`, `password_reset_tokens` | Completed |
+| **9** | `POST /auth/refresh-token` | Public | **Silent Background Refresh**: Mobile app refreshes expired access token (24h) without logging the user out. | `refresh_tokens` | Completed |
+| **10** | `POST /auth/logout` | Authenticated | **User Logout Trigger**: Revokes refresh token in PostgreSQL and flushes active client session. | `refresh_tokens` | Completed |
+
+---
+
+### Module 2: Profile & Cricket Profile Management (4 APIs)
+*Domain Scope: User personal profile, avatar uploads to S3/CDN, and specialized cricket statistics (CricHeroes sync, batting/bowling styles).*  
+*Status: **READY FOR DEVELOPMENT***
+
+| # | HTTP Method & Route | Target Role | Functional Use Case & Real-World Trigger | Database Entities Impacted | Status |
+|:---:|:---|:---:|:---|:---|:---:|
+| **11** | `GET /users/profile` | Authenticated | **My Profile Screen**: Retrieves personal profile details (full name, email, mobile, city, bio, avatar, and active role). | `users`, `player_profiles` | Planned |
+| **12** | `PATCH /users/profile` | Authenticated | **Edit Profile Screen**: Allows updating user name, city, and secondary contact details. | `users` | Planned |
+| **13** | `POST /users/profile/photo` | Authenticated | **Profile Avatar Upload**: Multipart upload of profile photo. Generates CDN/S3 URL and updates user profile. | `users` | Planned |
+| **14** | `PUT /users/player-profile` | Player | **Cricket Bio & Stats Setup (Screen 14)**: Sets player playing role (Batsman, Bowler, All-Rounder, Wicket Keeper), batting/bowling style, jersey number, CricHeroes profile link, and career stats. | `player_profiles` | Planned |
+
+---
+
+### Module 3: Role-Specific Dashboards (3 APIs)
+*Domain Scope: Aggregated home screens tailored to the active role (Organizer, Captain, Player) with metrics, live auction alerts, and quick actions.*  
+*Status: **READY FOR DEVELOPMENT***
+
+| # | HTTP Method & Route | Target Role | Functional Use Case & Real-World Trigger | Database Entities Impacted | Status |
+|:---:|:---|:---:|:---|:---|:---:|
+| **15** | `GET /dashboard/organizer` | Organizer | **Organizer Home Screen**: Returns active tournament drafts, registration counts, team invitation status, and upcoming auction timers. | `tournaments`, `teams`, `tournament_players` | Planned |
+| **16** | `GET /dashboard/captain` | Captain | **Captain Home Screen**: Displays team purse budget, squad fill count (e.g. 11/15 players), upcoming auction countdown, and upcoming match schedule. | `teams`, `squad_members`, `tournaments`, `matches` | Planned |
+| **17** | `GET /dashboard/player` | Player | **Player Home Screen**: Shows active tournament registration status (Registered, Sold, Unsold), auction lot number, target squad placement, and match schedule. | `tournament_players`, `squad_members`, `tournaments` | Planned |
+
+---
+
+### Module 4: Tournament Creation & Rules Management (8 APIs)
+*Domain Scope: Tournament lifecycle (Draft -> Published -> Registration Open -> Live -> Completed), rules, purse budgets, bid timers, and public share links.*  
+*Status: **READY FOR DEVELOPMENT***
+
+| # | HTTP Method & Route | Target Role | Functional Use Case & Real-World Trigger | Database Entities Impacted | Status |
+|:---:|:---|:---:|:---|:---|:---:|
+| **18** | `POST /tournaments` | Organizer | **Tournament Wizard Step 1 (Screen 16)**: Organizer creates tournament draft with name, ground venue, dates, ball type (Tennis/Leather), format (T20/T10), and entry fee. | `tournaments` | Planned |
+| **19** | `GET /tournaments` | Organizer | **My Tournaments List**: Returns list of all tournaments created by organizer, filterable by status (`draft`, `upcoming`, `ongoing`, `completed`). | `tournaments` | Planned |
+| **20** | `GET /tournaments/:id` | Authenticated | **Tournament Detail Screen**: Retrieves complete tournament information, schedule, venue, and configured auction rules. | `tournaments`, `tournament_settings` | Planned |
+| **21** | `PATCH /tournaments/:id` | Organizer | **Edit Tournament Details**: Updates tournament dates, venue ground, banner image, or description. | `tournaments` | Planned |
+| **22** | `PUT /tournaments/:id/settings` | Organizer | **Auction Rules Setup (Screen 17)**: Configures total teams, squad min/max limits, team purse budget (e.g. 10 Lakhs), default base price, bid increments, and bid countdown timer. | `tournament_settings` | Planned |
+| **23** | `POST /tournaments/:id/publish` | Organizer | **Launch Tournament**: Finalizes setup and publishes tournament. Generates public player registration link and captain invite links. | `tournaments` | Planned |
+| **24** | `DELETE /tournaments/:id` | Organizer | **Delete / Archive Tournament**: Cancels or archives draft/upcoming tournament. | `tournaments` | Planned |
+| **25** | `GET /tournaments/public/:slug` | Public | **Public Landing Page (Share Link)**: Publicly viewable tournament overview for unregistered players and invited captains before logging in. | `tournaments`, `tournament_settings` | Planned |
+
+---
+
+### Module 5: Teams & Captain Management (8 APIs)
+*Domain Scope: Team creation, captain assignments, invitation dispatch via WhatsApp/SMS, captain acceptance, team purse tracking, and team branding.*  
+*Status: **READY FOR DEVELOPMENT***
+
+| # | HTTP Method & Route | Target Role | Functional Use Case & Real-World Trigger | Database Entities Impacted | Status |
+|:---:|:---|:---:|:---|:---|:---:|
+| **26** | `GET /tournaments/:id/teams` | Authenticated | **Tournament Teams List (Screen 18)**: Displays all teams participating in tournament, assigned captains, status (Pending, Invited, Accepted), and squad sizes. | `teams`, `users` | Planned |
+| **27** | `POST /tournaments/:id/teams` | Organizer | **Add Team Modal (Screen 19)**: Adds team name and placeholder captain contact info. Allocates tournament purse budget. | `teams` | Planned |
+| **28** | `PATCH /tournaments/:id/teams/:teamId` | Organizer | **Edit Team Assignment**: Updates team details or re-assigns placeholder captain name/mobile. | `teams` | Planned |
+| **29** | `DELETE /tournaments/:id/teams/:teamId` | Organizer | **Remove Team**: Removes an uncommitted team from the tournament roster. | `teams` | Planned |
+| **30** | `POST /tournaments/:id/teams/:teamId/invite` | Organizer | **Send Captain Invite**: Dispatches invitation link via WhatsApp/SMS to captain candidate with unique claim code. | `teams` | Planned |
+| **31** | `POST /teams/join` | Captain | **Captain Claim Link Screen**: Captain opens invite link, confirms mobile number, and claims ownership of team and captaincy. | `teams`, `users` | Planned |
+| **32** | `GET /teams/:teamId/squad` | Authenticated | **Team Squad & Purse Roster**: Displays bought players, purchase prices, remaining purse budget, and remaining squad capacity. | `teams`, `squad_members`, `tournament_players` | Planned |
+| **33** | `PATCH /teams/:teamId/profile` | Captain | **Team Branding Screen**: Captain uploads team logo and sets short code (e.g. "STR" for Surat Strikers). | `teams` | Planned |
+
+---
+
+### Module 6: Player Registration & Capacity Management (7 APIs)
+*Domain Scope: Player tournament enrollment, vetting/approval workflows, base price setting, capacity enforcement, and withdrawal.*  
+*Status: **READY FOR DEVELOPMENT***
+
+| # | HTTP Method & Route | Target Role | Functional Use Case & Real-World Trigger | Database Entities Impacted | Status |
+|:---:|:---|:---:|:---|:---|:---:|
+| **34** | `POST /tournaments/:id/players/register` | Player | **Player Registration Screen (Screen 20)**: Player submits enrollment for a tournament with chosen role, jersey size, base price, and CricHeroes link. | `tournament_players`, `player_profiles` | Planned |
+| **35** | `GET /tournaments/:id/players/my-status` | Player | **Registration Tracker Screen**: Player checks if registration is Pending, Approved, or Rejected, and views assigned auction lot number. | `tournament_players` | Planned |
+| **36** | `DELETE /tournaments/:id/players/withdraw` | Player | **Withdraw Registration Action**: Player opts out of tournament prior to auction start. | `tournament_players` | Planned |
+| **37** | `GET /tournaments/:id/players` | Organizer | **Organizer Player Approval Screen**: Paginated list of registered players with role filters, status filters, and search capabilities. | `tournament_players`, `users` | Planned |
+| **38** | `GET /tournaments/:id/players/stats` | Organizer | **Capacity Dashboard Widget**: Capacity meter (e.g. 128/150 filled), approval count, and role distribution breakdown. | `tournament_players`, `tournament_settings` | Planned |
+| **39** | `PATCH /tournaments/:id/players/:playerId/status` | Organizer | **Approve / Reject Action**: Organizer marks applicant as Approved or Rejected with reason. | `tournament_players` | Planned |
+| **40** | `PATCH /tournaments/:id/players/:playerId/base-price` | Organizer | **Base Price Adjustment**: Organizer reviews and sets official base auction price for player. | `tournament_players` | Planned |
+
+---
+
+### Module 7: Live Auction Engine (REST + WebSocket) (13 REST APIs + 8 Events)
+*Domain Scope: Real-time live player auction room ("the hammer"), advisory lock bidding serialization, UNLOGGED fast state cache, and instant SOLD transactions.*  
+*Status: **READY FOR DEVELOPMENT***
+
+| # | HTTP Method & Route | Target Role | Functional Use Case & Real-World Trigger | Database Entities Impacted | Status |
+|:---:|:---|:---:|:---|:---|:---:|
+| **41** | `POST /tournaments/:id/auction/start` | Organizer | **Start Auction Room**: Organizer opens live auction room, initializing the `live_auction_state` UNLOGGED table. | `tournaments`, `live_auction_state` | Planned |
+| **42** | `POST /tournaments/:id/auction/pause` | Organizer | **Pause Auction Action**: Temporarily freezes the bid countdown timer during breaks or disputes. | `live_auction_state` | Planned |
+| **43** | `POST /tournaments/:id/auction/resume` | Organizer | **Resume Auction Action**: Resumes bidding timer and action acceptance. | `live_auction_state` | Planned |
+| **44** | `POST /tournaments/:id/auction/next-player` | Organizer | **Call Player to Hammer**: Loads next lot player onto the bidding block with base price and 10s countdown. | `live_auction_state`, `tournament_players` | Planned |
+| **45** | `POST /tournaments/:id/auction/bid` | Captain | **Bid Button Tap**: Captain submits competitive bid. Serialized via PostgreSQL transaction advisory lock `pg_advisory_xact_lock`. | `live_auction_state`, `auction_bids`, `teams` | Planned |
+| **46** | `POST /tournaments/:id/auction/sell` | Organizer | **Hammer Strike: "SOLD"**: Strikes hammer. Atomically transfers player to team squad, deducts purse budget, and clears auction block in one ACID transaction. | `squad_members`, `teams`, `tournament_players`, `live_auction_state` | Planned |
+| **47** | `POST /tournaments/:id/auction/pass` | Organizer | **Hammer Strike: "UNSOLD"**: Passes player with no bids. Marks player status as `UNSOLD`. | `tournament_players`, `live_auction_state` | Planned |
+| **48** | `POST /tournaments/:id/auction/undo` | Organizer | **Undo Misclick Bid**: Reverts erroneous last bid to the preceding bidder in the audit ledger. | `live_auction_state`, `auction_bids` | Planned |
+| **49** | `GET /tournaments/:id/auction/state` | Authenticated | **Room Snapshot Initial Load**: Full state snapshot when opening the auction screen (current player, bid, leading team, timer, squad rosters). | `live_auction_state`, `teams` | Planned |
+| **50** | `GET /tournaments/:id/auction/history` | Authenticated | **Sold / Unsold Log Screen**: Historical transaction ledger of all hammered players and prices. | `auction_bids`, `squad_members` | Planned |
+| **51** | `POST /tournaments/:id/auction/accelerated-round` | Organizer | **Accelerated Re-Entry Round**: Re-queues unsold players for a speed round with adjusted base prices. | `tournament_players`, `live_auction_state` | Planned |
+| **52** | `GET /tournaments/:id/auction/wishlist` | Captain | **Captain Strategy Wishlist**: Captain views target players, priority tier, and max intended budget. | `player_wishlists` | Planned |
+| **53** | `POST /tournaments/:id/auction/wishlist` | Captain | **Add / Remove Wishlist Target**: Captain pins or unpins target player to wishlist. | `player_wishlists` | Planned |
+
+#### Real-Time WebSocket Events (`/ws/v1/auction`):
+1. `AUCTION_ROOM_STATE`: Full synchronization snapshot upon connection.
+2. `AUCTION_NEW_PLAYER`: Player called to the auction hammer.
+3. `AUCTION_BID_PLACED`: Real-time notification of new leading bid & bidder.
+4. `AUCTION_TIMER_TICK`: 10-second countdown tick broadcast to all clients.
+5. `AUCTION_GOING_TWICE`: Going once / Going twice warning.
+6. `AUCTION_PLAYER_SOLD`: Player purchased celebration & purse deduction broadcast.
+7. `AUCTION_PLAYER_UNSOLD`: Player passed without bids broadcast.
+8. `AUCTION_PAUSED_RESUMED`: Live auction room paused / resumed notice.
+
+---
+
+### Module 8: Matches, Fixtures & Scoring (5 APIs)
+*Domain Scope: Tournament fixture scheduling, ball-by-ball score tracking, live scorecard display, and tournament points table (NRR).*  
+*Status: **READY FOR DEVELOPMENT***
+
+| # | HTTP Method & Route | Target Role | Functional Use Case & Real-World Trigger | Database Entities Impacted | Status |
+|:---:|:---|:---:|:---|:---|:---:|
+| **54** | `GET /tournaments/:id/matches` | Authenticated | **Fixtures Tab**: Retrieves complete tournament match schedule and status (`UPCOMING`, `LIVE`, `COMPLETED`). | `matches`, `teams` | Planned |
+| **55** | `POST /tournaments/:id/matches` | Organizer | **Schedule Match Modal**: Organizer schedules fixture between Team 1 and Team 2 with date, time, venue, and overs. | `matches` | Planned |
+| **56** | `GET /matches/:matchId` | Authenticated | **Live Scorecard Screen**: Real-time scorecard showing total runs, wickets, overs, current striker, and bowler. | `matches`, `match_scorecards` | Planned |
+| **57** | `PATCH /matches/:matchId/score` | Organizer (Scorer) | **Scorer Ball Entry Screen**: Official scorer records each delivery (runs, extra, wicket, batsman, bowler). | `match_scorecards`, `matches` | Planned |
+| **58** | `GET /tournaments/:id/standings` | Authenticated | **Points Table Screen**: Displays standings, matches played, won, lost, points, and Net Run Rate (NRR). | `matches`, `teams` | Planned |
+
+---
+
+### Module 9: Notifications & Push Alerts (4 APIs)
+*Domain Scope: In-app notification inbox, read/unread states, and mobile push token registration (FCM/APNS).*  
+*Status: **READY FOR DEVELOPMENT***
+
+| # | HTTP Method & Route | Target Role | Functional Use Case & Real-World Trigger | Database Entities Impacted | Status |
+|:---:|:---|:---:|:---|:---|:---:|
+| **59** | `GET /notifications` | Authenticated | **Notification Center Screen**: Displays inbox of auction alerts, invite notices, and match schedules. | `notifications` | Planned |
+| **60** | `PATCH /notifications/:id/read` | Authenticated | **Read Item Trigger**: Marks individual notification as read upon tap. | `notifications` | Planned |
+| **61** | `POST /notifications/read-all` | Authenticated | **Mark All Read Action**: Clears unread badge counter in one tap. | `notifications` | Planned |
+| **62** | `POST /notifications/device-token` | Authenticated | **Push Token Registration**: Mobile client registers FCM/APNS token on app startup for remote push notifications. | `device_push_tokens` | Planned |
+
+---
+
+## 6. Architectural Dependency Graph & Module Execution Order
+
+The entities and business workflows exhibit a strict natural domain hierarchy:
+
+```mermaid
+flowchart TD
+    M1["Module 1: Authentication & RBAC
+(users, tokens, roles)
+[COMPLETED]"] --> M2["Module 2: Profile & Cricket Bio
+(player_profiles)"]
+    M1 --> M4["Module 4: Tournament Setup & Rules
+(tournaments, tournament_settings)"]
+
+    M4 --> M5["Module 5: Team & Captain Management
+(teams, captain_invites)"]
+    M4 --> M6["Module 6: Player Registration
+(tournament_players)"]
+    M2 --> M6
+
+    M5 & M6 --> M7["Module 7: Live Auction Engine
+(live_auction_state, bids, squad_members)"]
+
+    M5 & M4 --> M8["Module 8: Matches & Scoring
+(matches, match_scorecards)"]
+
+    M1 & M4 & M7 --> M9["Module 9: Notifications & Push
+(notifications, device_tokens)"]
+
+    M4 & M5 & M6 & M7 --> M3["Module 3: Role Dashboards Feed
+(Aggregates M4, M5, M6, M7)"]
+```
+
+### Dependency Rules:
+1. **Module 1 (Auth)** is complete and provides the security identity context (`UserPrincipal`) for all downstream modules.
+2. **Module 4 (Tournament Management)** is the **root operational backbone** of the entire system:
+   - Teams (Module 5) cannot exist without a Tournament.
+   - Player Registrations (Module 6) cannot occur without a Tournament.
+   - The Live Auction (Module 7) cannot run without Teams, Players, and a Tournament.
+   - Matches (Module 8) cannot be scheduled without Teams and a Tournament.
+3. **Module 2 (User & Cricket Profile)** extends the `User` entity with player bio, CricHeroes link, and batting/bowling statistics.
+4. **Module 3 (Dashboards)** is an **aggregation layer**; building it after the core entities (Tournaments, Teams, Registrations) ensures its feeds have real underlying data to query.
+
+---
+
+## 7. Recommended Next Module to Pick Up
+
+Based on domain dependencies and business value, there are two logical choices for the next development cycle:
+
+### Option 1 (Recommended): Module 4 - Tournament Creation & Rules Management (8 APIs)
+- **Why**: It is the foundational anchor for all other tournament-centric modules (Teams, Player Registrations, Auction Room, Matches). Once Tournament APIs exist, all other features can be plugged into real tournament instances.
+- **Scope**:
+  - Flyway migration `V4__create_tournaments_and_settings_schema.sql` (`tournaments`, `tournament_settings`).
+  - DTOs, Repository, Service contracts, and REST Controller for APIs 18–25.
+  - Slug generation, date validation, and public link resolution.
+
+### Option 2: Module 2 - User Profile & Cricket Bio Management (4 APIs)
+- **Why**: Direct leaf extension of the existing `users` table. Fast and self-contained.
+- **Scope**:
+  - Flyway migration for `player_profiles` table.
+  - S3 / Local multipart photo upload handler.
+  - Cricket bio update APIs 11–14.
+
+> **Recommendation**: Implement **Module 4 (Tournament Management)** first to establish the tournament backbone, followed immediately by Module 5 (Teams) or Module 2 (Profiles).

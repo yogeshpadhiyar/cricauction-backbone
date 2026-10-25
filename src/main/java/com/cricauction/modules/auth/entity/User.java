@@ -49,6 +49,9 @@ public class User {
     @Column(name = "city", length = 100)
     private String city;
 
+    @Column(name = "bio", length = 500)
+    private String bio;
+
     @Column(name = "profile_photo_url", length = 500)
     private String profilePhotoUrl;
 
