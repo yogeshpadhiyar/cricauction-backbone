@@ -1,0 +1,38 @@
+spring:
+  application:
+    name: cricauction-backbone-test
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: jdbc:h2:mem:cricauction_test;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: 
+    hikari:
+      maximum-pool-size: 50
+      minimum-idle: 10
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+  flyway:
+    enabled: false
+
+cricauction:
+  security:
+    jwt:
+      secret: cricauction_very_long_secure_secret_key_that_exceeds_256_bits_for_hmac_sha256!
+      access-token-expiration-ms: 86400000
+      refresh-token-expiration-ms: 604800000
+    google:
+      client-id: test-client-id
+    otp:
+      expiration-seconds: 300
+      retry-after-seconds: 45
+      length: 6
+    password-reset:
+      token-expiration-minutes: 15

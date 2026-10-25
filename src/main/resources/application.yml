@@ -1,0 +1,74 @@
+server:
+  port: 8080
+  tomcat:
+    threads:
+      max: 200
+      min-spare: 20
+    max-connections: 10000
+    accept-count: 5000
+    connection-timeout: 20000
+
+spring:
+  application:
+    name: cricauction-backbone
+
+  threads:
+    virtual:
+      enabled: true
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:cricauction}
+    username: ${DB_USER:}
+    password: ${DB_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 50
+      minimum-idle: 25
+      idle-timeout: 300000
+      max-lifetime: 1800000
+      connection-timeout: 10000
+      leak-detection-threshold: 2000
+      data-source-properties:
+        cachePrepStmts: true
+        prepStmtCacheSize: 250
+        prepStmtCacheSqlLimit: 2048
+        useServerPrepStmts: true
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc.batch_size: 50
+        order_inserts: true
+        order_updates: true
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
+cricauction:
+  security:
+    jwt:
+      secret: ${JWT_SECRET:cricauction_very_long_secure_secret_key_that_exceeds_256_bits_for_hmac_sha256!}
+      access-token-expiration-ms: 86400000 # 24 hours (86400s)
+      refresh-token-expiration-ms: 604800000 # 7 days
+    google:
+      client-id: ${GOOGLE_CLIENT_ID:}
+    otp:
+      expiration-seconds: 300
+      retry-after-seconds: 45
+      length: 6
+    password-reset:
+      token-expiration-minutes: 15
+
+springdoc:
+    api-docs:
+      enabled: true
+      path: /v3/api-docs
+    swagger-ui:
+      enabled: true
+      path: /swagger-ui.html
