@@ -248,6 +248,22 @@ public class TournamentServiceImpl implements TournamentService {
         if (request.getAllowPlayersToWithdraw() != null) {
             settings.setAllowPlayersToWithdraw(request.getAllowPlayersToWithdraw());
         }
+        if (request.getCaptainRegistrationMode() != null && !request.getCaptainRegistrationMode().isBlank()) {
+            String mode = request.getCaptainRegistrationMode().trim().toUpperCase(java.util.Locale.ENGLISH);
+            if ("BOTH".equals(mode) || "OPEN".equals(mode)) {
+                settings.setCaptainRegistrationMode("BOTH");
+            } else {
+                settings.setCaptainRegistrationMode("INVITE_ONLY");
+            }
+        }
+        if (request.getCaptainApprovalMode() != null && !request.getCaptainApprovalMode().isBlank()) {
+            String appMode = request.getCaptainApprovalMode().trim().toUpperCase(java.util.Locale.ENGLISH);
+            if ("AUTO".equals(appMode)) {
+                settings.setCaptainApprovalMode("AUTO");
+            } else {
+                settings.setCaptainApprovalMode("ORGANIZER_APPROVAL");
+            }
+        }
 
         tournament.setStep(2);
         settingsRepository.save(settings);

@@ -69,6 +69,14 @@ public class TournamentSettings {
     @Builder.Default
     private boolean allowPlayersToWithdraw = true;
 
+    @Column(name = "captain_registration_mode", nullable = false)
+    @Builder.Default
+    private String captainRegistrationMode = "INVITE_ONLY";
+
+    @Column(name = "captain_approval_mode", nullable = false)
+    @Builder.Default
+    private String captainApprovalMode = "ORGANIZER_APPROVAL";
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;

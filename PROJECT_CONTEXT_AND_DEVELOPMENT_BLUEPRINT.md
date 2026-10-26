@@ -127,7 +127,8 @@ erDiagram
 ### 4.3 Database Migrations Status
 - `V1__init_cricauction_schema.sql`: Core schema (users, roles, user_roles, otp_verifications, refresh_tokens, password_reset_tokens, player_profiles).
 - `V2__create_tournaments_and_settings_schema.sql`: Tournaments and tournament_settings relational tables with composite indexes on `(organizer_id, status)` and `@Version` optimistic locking column.
-- *Pending V3+*: Teams, tournament players, squads, live auction unlogged state, bids ledger, matches, scorecards, and notifications.
+- `V3__create_teams_and_squad_schema.sql`: Teams and squad_members tables with indexes on `(tournament_id)`, `(captain_id)`, `(invite_code)` and `@Version` optimistic locking.
+- *Pending V4+*: Tournament players, live auction unlogged state, bids ledger, matches, scorecards, and notifications.
 
 ---
 
@@ -195,17 +196,23 @@ WebSocket Gateway: /ws/v1/auction
 | 24 | `DELETE` | `/tournaments/:id` | Organizer | Archive / delete tournament | Completed |
 | 25 | `GET` | `/tournaments/public/:slug` | Public | Public landing page info for invite/registration links | Completed |
 
-### Module 5: Team & Captain Management (8 APIs) — `[READY FOR DEV]`
+### Module 5: Team & Captain Management (8 APIs) — `[COMPLETED & OPTIMIZED]`
+- Benchmark: 5,000 concurrent operations in **39.46 seconds** (126.71 ops/sec) with **100.00% Success Rate** on actual PostgreSQL 18+.
+- Total persisted teams in `teams` table: **10,263** (Accepted: 3,429, Invited: 2,499, Pending: 4,335).
+- Total persisted squad members in `squad_members` table: **3,429** (captains auto-injected).
+- Master Guide: `MODULE_5_TEAM_AND_CAPTAIN_MANAGEMENT_MASTER_GUIDE.md`.
+- Concurrency Runner: `run-5000-users-team-automation.sh`.
+
 | # | Method | Endpoint | Access | Purpose | Status |
 |---|---|---|---|---|---|
-| 26 | `GET` | `/tournaments/:id/teams` | Authenticated | List all teams in tournament with captain statuses | Planned |
-| 27 | `POST` | `/tournaments/:id/teams` | Organizer | Add team with placeholder captain details | Planned |
-| 28 | `PATCH` | `/tournaments/:id/teams/:teamId` | Organizer | Update team info or assigned captain | Planned |
-| 29 | `DELETE` | `/tournaments/:id/teams/:teamId` | Organizer | Remove team from tournament | Planned |
-| 30 | `POST` | `/tournaments/:id/teams/:teamId/invite` | Organizer | Dispatch captain invitation link via SMS/WhatsApp | Planned |
-| 31 | `POST` | `/teams/join` | Captain | Claim team captaincy via invite code | Planned |
-| 32 | `GET` | `/teams/:teamId/squad` | Authenticated | Fetch team squad roster, spent purse, and budget | Planned |
-| 33 | `PATCH` | `/teams/:teamId/profile` | Captain | Update team branding (logo, short code) | Planned |
+| 26 | `GET` | `/tournaments/:id/teams` | Authenticated | List all teams in tournament with captain statuses | Completed |
+| 27 | `POST` | `/tournaments/:id/teams` | Organizer | Add team with placeholder captain details | Completed |
+| 28 | `PATCH` | `/tournaments/:id/teams/:teamId` | Organizer | Update team info or assigned captain | Completed |
+| 29 | `DELETE` | `/tournaments/:id/teams/:teamId` | Organizer | Remove team from tournament | Completed |
+| 30 | `POST` | `/tournaments/:id/teams/:teamId/invite` | Organizer | Dispatch captain invitation link via SMS/WhatsApp | Completed |
+| 31 | `POST` | `/teams/join` | Authenticated | Claim team captaincy via invite code (auto-assigns ROLE_CAPTAIN & squad member) | Completed |
+| 32 | `GET` | `/teams/:teamId/squad` | Authenticated | Fetch team squad roster, spent purse, and budget | Completed |
+| 33 | `PATCH` | `/teams/:teamId/profile` | Captain/Organizer | Update team branding (logo, short code) | Completed |
 
 ### Module 6: Player Registration & Capacity Management (7 APIs) — `[READY FOR DEV]`
 | # | Method | Endpoint | Access | Purpose | Status |

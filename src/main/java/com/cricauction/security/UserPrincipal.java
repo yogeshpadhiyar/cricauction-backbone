@@ -68,6 +68,10 @@ public class UserPrincipal implements UserDetails {
         return hasRole("organizer");
     }
 
+    public boolean isCaptain() {
+        return hasRole("captain");
+    }
+
     @Override
     public String getUsername() {
         return mobile != null ? mobile : email;

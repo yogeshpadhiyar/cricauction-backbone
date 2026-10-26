@@ -8,8 +8,6 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDate;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 
 @Data
 @Builder
@@ -27,11 +25,21 @@ public class PublicTournamentResponse {
     private int registered;
     private boolean registrationOpen;
     private String auctionDate;
+    private String captainRegistrationMode;
+    private String captainApprovalMode;
 
     public static PublicTournamentResponse fromEntity(Tournament tournament, int registeredCount) {
         int capacity = 150;
+        String capMode = "INVITE_ONLY";
+        String appMode = "ORGANIZER_APPROVAL";
         if (tournament.getSettings() != null) {
             capacity = tournament.getSettings().getTotalTeams() * tournament.getSettings().getSquadMaximum();
+            if (tournament.getSettings().getCaptainRegistrationMode() != null) {
+                capMode = tournament.getSettings().getCaptainRegistrationMode();
+            }
+            if (tournament.getSettings().getCaptainApprovalMode() != null) {
+                appMode = tournament.getSettings().getCaptainApprovalMode();
+            }
         }
 
         LocalDate today = LocalDate.now();
@@ -63,6 +71,8 @@ public class PublicTournamentResponse {
                 .registered(registeredCount)
                 .registrationOpen(isOpen)
                 .auctionDate(auctionDateIso)
+                .captainRegistrationMode(capMode)
+                .captainApprovalMode(appMode)
                 .build();
     }
 }

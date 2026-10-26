@@ -44,4 +44,10 @@ public class TournamentSettingsRequest {
 
     @Schema(example = "true")
     private Boolean allowPlayersToWithdraw;
+
+    @Schema(example = "INVITE_ONLY", description = "Captain joining behavior: INVITE_ONLY (default) or BOTH (supports both invites and open captain self-registration)")
+    private String captainRegistrationMode;
+
+    @Schema(example = "ORGANIZER_APPROVAL", description = "Captain approval behavior: ORGANIZER_APPROVAL (default, organizer manually approves applicants) or AUTO (auto-approve upon registration)")
+    private String captainApprovalMode;
 }
