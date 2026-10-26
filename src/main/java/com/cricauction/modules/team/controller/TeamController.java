@@ -21,7 +21,6 @@ import java.util.List;
 
 @Slf4j
 @RestController
-@RequestMapping
 @RequiredArgsConstructor
 @Tag(name = "Module 5: Team & Captain Management", description = "APIs 26–33 for team rosters, captain invites, squad purse, and branding")
 public class TeamController {
@@ -32,7 +31,7 @@ public class TeamController {
      * API 26: List Tournament Teams
      */
     @Operation(summary = "List Tournament Teams (API 26)", security = @SecurityRequirement(name = "bearerAuth"))
-    @GetMapping({"/api/v1/tournaments/{tournamentId}/teams", "/tournaments/{tournamentId}/teams"})
+    @GetMapping("/api/v1/tournaments/{tournamentId}/teams")
     public ResponseEntity<ApiResponse<TournamentTeamsResponse>> getTournamentTeams(
             @AuthenticationPrincipal UserPrincipal currentUser,
             @PathVariable("tournamentId") String tournamentId) {
@@ -44,7 +43,7 @@ public class TeamController {
      * API 27: Add New Team
      */
     @Operation(summary = "Add New Team (API 27)", security = @SecurityRequirement(name = "bearerAuth"))
-    @PostMapping({"/api/v1/tournaments/{tournamentId}/teams", "/tournaments/{tournamentId}/teams"})
+    @PostMapping("/api/v1/tournaments/{tournamentId}/teams")
     public ResponseEntity<ApiResponse<AddTeamResponse>> addTeam(
             @AuthenticationPrincipal UserPrincipal currentUser,
             @PathVariable("tournamentId") String tournamentId,
@@ -59,7 +58,7 @@ public class TeamController {
      */
     @Operation(summary = "Edit Team & Captain Assignment (API 28)", security = @SecurityRequirement(name = "bearerAuth"))
     @RequestMapping(
-            value = {"/api/v1/tournaments/{tournamentId}/teams/{teamId}", "/tournaments/{tournamentId}/teams/{teamId}"},
+            value = "/api/v1/tournaments/{tournamentId}/teams/{teamId}",
             method = {RequestMethod.PATCH, RequestMethod.PUT}
     )
     public ResponseEntity<ApiResponse<TeamSummaryResponse>> updateTeam(
@@ -75,7 +74,7 @@ public class TeamController {
      * API 29: Delete Team
      */
     @Operation(summary = "Delete Team (API 29)", security = @SecurityRequirement(name = "bearerAuth"))
-    @DeleteMapping({"/api/v1/tournaments/{tournamentId}/teams/{teamId}", "/tournaments/{tournamentId}/teams/{teamId}"})
+    @DeleteMapping("/api/v1/tournaments/{tournamentId}/teams/{teamId}")
     public ResponseEntity<ApiResponse<Void>> deleteTeam(
             @AuthenticationPrincipal UserPrincipal currentUser,
             @PathVariable("tournamentId") String tournamentId,
@@ -88,7 +87,7 @@ public class TeamController {
      * API 30: Send Captain Invitation (WhatsApp / SMS)
      */
     @Operation(summary = "Send Captain Invitation (API 30)", security = @SecurityRequirement(name = "bearerAuth"))
-    @PostMapping({"/api/v1/tournaments/{tournamentId}/teams/{teamId}/invite", "/tournaments/{tournamentId}/teams/{teamId}/invite"})
+    @PostMapping("/api/v1/tournaments/{tournamentId}/teams/{teamId}/invite")
     public ResponseEntity<ApiResponse<InviteCaptainResponse>> sendCaptainInvite(
             @AuthenticationPrincipal UserPrincipal currentUser,
             @PathVariable("tournamentId") String tournamentId,
@@ -103,7 +102,7 @@ public class TeamController {
      * API 31: Captain Accepts Invite
      */
     @Operation(summary = "Captain Accepts Invite (API 31)", security = @SecurityRequirement(name = "bearerAuth"))
-    @PostMapping({"/api/v1/teams/join", "/teams/join"})
+    @PostMapping("/api/v1/teams/join")
     public ResponseEntity<ApiResponse<JoinTeamResponse>> joinTeam(
             @AuthenticationPrincipal UserPrincipal currentUser,
             @Valid @RequestBody JoinTeamRequest request) {
@@ -115,7 +114,7 @@ public class TeamController {
      * API 31b: Captain Self-Registration (Open / Public Tournament)
      */
     @Operation(summary = "Captain Self-Registration in Public Tournament (API 31b)", security = @SecurityRequirement(name = "bearerAuth"))
-    @PostMapping({"/api/v1/tournaments/{tournamentId}/teams/register-captain", "/tournaments/{tournamentId}/teams/register-captain"})
+    @PostMapping("/api/v1/tournaments/{tournamentId}/teams/register-captain")
     public ResponseEntity<ApiResponse<JoinTeamResponse>> selfRegisterCaptain(
             @AuthenticationPrincipal UserPrincipal currentUser,
             @PathVariable("tournamentId") String tournamentId,
@@ -129,7 +128,7 @@ public class TeamController {
      * API 31c: List Pending Captain Applications (Organizer Review Queue)
      */
     @Operation(summary = "List Pending Captain Applications (API 31c)", security = @SecurityRequirement(name = "bearerAuth"))
-    @GetMapping({"/api/v1/tournaments/{tournamentId}/teams/captain-requests", "/tournaments/{tournamentId}/teams/captain-requests"})
+    @GetMapping("/api/v1/tournaments/{tournamentId}/teams/captain-requests")
     public ResponseEntity<ApiResponse<List<TeamSummaryResponse>>> getPendingCaptainRequests(
             @AuthenticationPrincipal UserPrincipal currentUser,
             @PathVariable("tournamentId") String tournamentId) {
@@ -141,7 +140,7 @@ public class TeamController {
      * API 31d: Organizer Approves or Rejects Captain Application
      */
     @Operation(summary = "Organizer Approves or Rejects Captain Application (API 31d)", security = @SecurityRequirement(name = "bearerAuth"))
-    @PostMapping({"/api/v1/tournaments/{tournamentId}/teams/{teamId}/captain-approval", "/tournaments/{tournamentId}/teams/{teamId}/captain-approval"})
+    @PostMapping("/api/v1/tournaments/{tournamentId}/teams/{teamId}/captain-approval")
     public ResponseEntity<ApiResponse<CaptainApprovalResponse>> reviewCaptainApplication(
             @AuthenticationPrincipal UserPrincipal currentUser,
             @PathVariable("tournamentId") String tournamentId,
@@ -155,7 +154,7 @@ public class TeamController {
      * API 32: Get Team Squad Roster & Purse
      */
     @Operation(summary = "Get Team Squad Roster & Purse (API 32)", security = @SecurityRequirement(name = "bearerAuth"))
-    @GetMapping({"/api/v1/teams/{teamId}/squad", "/teams/{teamId}/squad"})
+    @GetMapping("/api/v1/teams/{teamId}/squad")
     public ResponseEntity<ApiResponse<TeamSquadResponse>> getTeamSquad(
             @AuthenticationPrincipal UserPrincipal currentUser,
             @PathVariable("teamId") Long teamId) {
@@ -168,7 +167,7 @@ public class TeamController {
      */
     @Operation(summary = "Captain Updates Team Branding (API 33)", security = @SecurityRequirement(name = "bearerAuth"))
     @RequestMapping(
-            value = {"/api/v1/teams/{teamId}/profile", "/teams/{teamId}/profile"},
+            value = "/api/v1/teams/{teamId}/profile",
             method = {RequestMethod.PATCH, RequestMethod.PUT},
             consumes = {MediaType.APPLICATION_JSON_VALUE}
     )
@@ -182,7 +181,7 @@ public class TeamController {
 
     @Operation(summary = "Captain Updates Team Branding with Logo File (API 33 Multipart)", security = @SecurityRequirement(name = "bearerAuth"))
     @RequestMapping(
-            value = {"/api/v1/teams/{teamId}/profile", "/teams/{teamId}/profile"},
+            value = "/api/v1/teams/{teamId}/profile",
             method = {RequestMethod.PATCH, RequestMethod.PUT},
             consumes = {MediaType.MULTIPART_FORM_DATA_VALUE}
     )
