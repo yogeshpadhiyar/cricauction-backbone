@@ -24,6 +24,9 @@ public class OtpVerification {
     @Column(name = "purpose", nullable = false, length = 50)
     private String purpose;
 
+    @Column(name = "email", length = 150)
+    private String email;
+
     @Column(name = "mobile", length = 20)
     private String mobile;
 
@@ -44,8 +47,12 @@ public class OtpVerification {
     @PrePersist
     @PreUpdate
     public void ensureIdentifier() {
-        if ((identifier == null || identifier.isBlank()) && mobile != null) {
-            identifier = mobile;
+        if (identifier == null || identifier.isBlank()) {
+            if (email != null && !email.isBlank()) {
+                identifier = email;
+            } else if (mobile != null && !mobile.isBlank()) {
+                identifier = mobile;
+            }
         }
     }
 

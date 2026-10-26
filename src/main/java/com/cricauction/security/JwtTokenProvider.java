@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
+import java.util.List;
 
 @Slf4j
 @Component
@@ -31,11 +32,15 @@ public class JwtTokenProvider {
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + jwtConfig.getAccessTokenExpirationMs());
 
+        List<String> roleNames = user.getRoleNames();
+        String primaryRole = roleNames.isEmpty() ? "PLAYER" : roleNames.get(0).toUpperCase();
+
         return Jwts.builder()
                 .subject(String.valueOf(user.getId()))
                 .claim("email", user.getEmail())
                 .claim("mobile", user.getMobile())
-                .claim("role", user.getActiveRole().name())
+                .claim("role", primaryRole)
+                .claim("roles", roleNames)
                 .issuedAt(now)
                 .expiration(expiryDate)
                 .signWith(this.signingKey)

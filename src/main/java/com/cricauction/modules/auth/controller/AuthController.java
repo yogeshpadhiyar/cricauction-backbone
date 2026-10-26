@@ -139,14 +139,15 @@ public class AuthController {
     }
 
     /**
-     * 10. Switch / Set Active Role
+     * 10. Switch / Assign / Manage User Roles
      * PATCH /api/v1/auth/role
+     * PUT /api/v1/auth/roles
      */
-    @PatchMapping("/role")
+    @RequestMapping(value = {"/role", "/roles"}, method = {RequestMethod.PATCH, RequestMethod.PUT})
     public ResponseEntity<ApiResponse<RoleResponse>> switchRole(
             @AuthenticationPrincipal UserPrincipal currentUser,
             @Valid @RequestBody RoleSelectionRequest request) {
         RoleResponse response = authService.switchRole(currentUser, request);
-        return ResponseEntity.ok(ApiResponse.success("Role switched to " + response.getRole(), response));
+        return ResponseEntity.ok(ApiResponse.success("Roles updated successfully", response));
     }
 }

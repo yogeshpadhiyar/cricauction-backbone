@@ -2,6 +2,8 @@ package com.cricauction.modules.profile.controller;
 
 import com.cricauction.modules.auth.entity.User;
 import com.cricauction.modules.auth.entity.enums.UserRole;
+import com.cricauction.modules.auth.entity.Role;
+import com.cricauction.modules.auth.repository.RoleRepository;
 import com.cricauction.modules.auth.repository.UserRepository;
 import com.cricauction.modules.profile.dto.request.UpdatePlayerProfileRequest;
 import com.cricauction.modules.profile.dto.request.UpdateUserProfileRequest;
@@ -37,6 +39,9 @@ public class UserProfileControllerTest {
     private UserRepository userRepository;
 
     @Autowired
+    private RoleRepository roleRepository;
+
+    @Autowired
     private PlayerProfileRepository playerProfileRepository;
 
     @Autowired
@@ -55,7 +60,6 @@ public class UserProfileControllerTest {
                 .email("jasprit.test@cricauction.app")
                 .mobile("+919876543299")
                 .passwordHash("hashed_dummy_password")
-                .activeRole(UserRole.PLAYER)
                 .city("Ahmedabad")
                 .bio("Fast bowler representing India and Mumbai.")
                 .isMobileVerified(true)
@@ -66,6 +70,8 @@ public class UserProfileControllerTest {
         userRepository.findByEmail("jasprit.test@cricauction.app")
                 .ifPresent(u -> userRepository.delete(u));
 
+        Role playerRole = roleRepository.findByName(UserRole.PLAYER).orElseGet(() -> roleRepository.save(Role.builder().name(UserRole.PLAYER).build()));
+        testUser.addRole(playerRole);
         testUser = userRepository.save(testUser);
         token = jwtTokenProvider.generateAccessToken(testUser);
 
@@ -74,7 +80,6 @@ public class UserProfileControllerTest {
                 .email("rohit.test@cricauction.app")
                 .mobile("+919876543298")
                 .passwordHash("hashed_dummy_password")
-                .activeRole(UserRole.CAPTAIN)
                 .city("Mumbai")
                 .bio("Hitman and Captain.")
                 .isMobileVerified(true)
@@ -85,6 +90,8 @@ public class UserProfileControllerTest {
         userRepository.findByEmail("rohit.test@cricauction.app")
                 .ifPresent(u -> userRepository.delete(u));
 
+        Role captainRole = roleRepository.findByName(UserRole.CAPTAIN).orElseGet(() -> roleRepository.save(Role.builder().name(UserRole.CAPTAIN).build()));
+        otherUser.addRole(captainRole);
         otherUser = userRepository.save(otherUser);
 
         playerProfileRepository.save(PlayerProfile.builder()
@@ -107,7 +114,7 @@ public class UserProfileControllerTest {
                 .andExpect(jsonPath("$.data.fullName").value("Jasprit Bumrah"))
                 .andExpect(jsonPath("$.data.city").value("Ahmedabad"))
                 .andExpect(jsonPath("$.data.bio").value("Fast bowler representing India and Mumbai."))
-                .andExpect(jsonPath("$.data.role").value("player"));
+                .andExpect(jsonPath("$.data.roles").isArray());
     }
 
     @Test
@@ -120,7 +127,7 @@ public class UserProfileControllerTest {
                 .andExpect(jsonPath("$.data.fullName").value("Rohit Sharma"))
                 .andExpect(jsonPath("$.data.city").value("Mumbai"))
                 .andExpect(jsonPath("$.data.bio").value("Hitman and Captain."))
-                .andExpect(jsonPath("$.data.role").value("captain"))
+                .andExpect(jsonPath("$.data.roles").isArray())
                 .andExpect(jsonPath("$.data.playerProfile.playingRole").value("Batsman"))
                 .andExpect(jsonPath("$.data.playerProfile.jerseyNumber").value(45))
                 .andExpect(jsonPath("$.data.playerProfile.highestScore").value(264));

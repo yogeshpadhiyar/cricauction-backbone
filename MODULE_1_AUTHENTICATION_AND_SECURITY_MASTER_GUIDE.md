@@ -436,13 +436,27 @@ flowchart TD
 
 ## 6. Database Schema & Migration Walkthrough
 
-The module utilizes 4 core PostgreSQL tables managed by Flyway migrations (`V1`, `V2`, `V3`).
+The module utilizes 6 core PostgreSQL tables managed by Flyway migrations (`V1`, `V2`, `V3`, `V5`).
 
 ```mermaid
 erDiagram
     users ||--o{ refresh_tokens : owns
     users ||--o{ password_reset_tokens : requests
     users ||--o{ otp_verifications : targets
+    users ||--o{ user_roles : "assigned"
+    roles ||--o{ user_roles : "maps to"
+
+    roles {
+        serial id PK
+        varchar(50) name UK "ORGANIZER, CAPTAIN, PLAYER"
+        timestamp created_at
+    }
+
+    user_roles {
+        bigint user_id PK, FK
+        integer role_id PK, FK
+        timestamp assigned_at
+    }
 
     users {
         bigserial id PK
@@ -465,6 +479,7 @@ erDiagram
     otp_verifications {
         varchar(150) identifier PK
         varchar(50) purpose PK
+        varchar(150) email
         varchar(20) mobile
         varchar(10) otp_code
         int attempts
@@ -494,6 +509,8 @@ erDiagram
 - **`V1__init_auth_schema.sql`**: Initial DDL creating `users`, `otp_verifications`, `refresh_tokens`, and `password_reset_tokens` with B-Tree indexes on `email`, `mobile`, `token`, and `expires_at`.
 - **`V2__add_google_auth.sql`**: Makes `mobile` and `password_hash` nullable to support Google OAuth accounts; adds `auth_provider` (`LOCAL`, `GOOGLE`), `google_id` (unique index), and `is_email_verified`.
 - **`V3__support_email_and_mobile_otp_login.sql`**: Generalizes OTP verification table with an `identifier` column and composite primary key `(identifier, purpose)` with index `idx_otp_identifier_expiry`.
+- **`V5__create_roles_and_user_roles.sql`**: Multi-Role RBAC normalized architecture creating `roles` table (seeded with `ORGANIZER`, `CAPTAIN`, `PLAYER`) and `user_roles` Many-to-Many mapping table. Migrates existing users and allows holding multiple roles simultaneously.
+- **`V6__drop_active_role_from_users.sql`**: Completely drops the obsolete single-role `active_role` column from the `users` table, achieving full 3NF normalization without dual-source-of-truth anomalies.
 
 ---
 
@@ -789,10 +806,34 @@ curl -X POST http://localhost:8080/api/v1/auth/signup \
 
 ---
 
-### API 10: Switch Active Role (RBAC) & Session Management
-- **Switch Role**: `POST /auth/role` *(Authenticated)*
-  - Request: `{"role": "organizer"}`
-  - Response: `{"success": true, "data": {"role": "organizer"}}`
+### API 10: Manage & Assign User Roles (Multi-Role RBAC)
+- **Method & Route**: `PATCH /api/v1/auth/role` or `PUT /api/v1/auth/roles`
+- **Access**: Authenticated (`Bearer <JWT>`)
+- **Description**: Assigns or updates the current user's roles. Users can hold multiple roles simultaneously out of the 3 roles (`CAPTAIN`, `PLAYER`, `ORGANIZER`).
+- **Request Body (Multiple Roles)**:
+```json
+{
+  "roles": ["CAPTAIN", "PLAYER"]
+}
+```
+- **Request Body (Single Role addition / legacy compatibility)**:
+```json
+{
+  "role": "organizer"
+}
+```
+- **Response (`200 OK`)**:
+```json
+{
+  "success": true,
+  "message": "Roles updated successfully",
+  "data": {
+    "roles": ["captain", "player"],
+    "role": "captain"
+  },
+  "timestamp": "2026-10-25T16:00:00Z"
+}
+```
 - **Inspect Session Profile**: `GET /auth/me` *(Authenticated)*
   - Returns current user profile details based on Bearer token.
 - **User Logout**: `POST /auth/logout` *(Authenticated)*

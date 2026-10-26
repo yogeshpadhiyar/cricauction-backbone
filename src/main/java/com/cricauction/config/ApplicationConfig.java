@@ -1,8 +1,12 @@
 package com.cricauction.config;
 
+import com.cricauction.modules.auth.entity.Role;
+import com.cricauction.modules.auth.entity.enums.UserRole;
+import com.cricauction.modules.auth.repository.RoleRepository;
 import com.cricauction.security.CustomUserDetailsService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -43,5 +47,16 @@ public class ApplicationConfig {
         com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
         mapper.findAndRegisterModules();
         return mapper;
+    }
+
+    @Bean
+    public CommandLineRunner roleInitializer(RoleRepository roleRepository) {
+        return args -> {
+            for (UserRole role : UserRole.values()) {
+                if (roleRepository.findByName(role).isEmpty()) {
+                    roleRepository.save(Role.builder().name(role).build());
+                }
+            }
+        };
     }
 }

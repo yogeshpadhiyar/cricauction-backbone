@@ -178,7 +178,7 @@ public class FullFlow5000UsersActualDbTest {
 
                 RoleSelectionRequest roleReq = RoleSelectionRequest.builder().role("captain").build();
                 RoleResponse roleRes = authService.switchRole(principal, roleReq);
-                assertEquals("captain", roleRes.getRole());
+                assertTrue(roleRes.getRoles().contains("captain"));
             }
             case 1 -> {
                 // Journey 2: Mobile + OTP Passwordless Login -> Get Current Profile
@@ -234,7 +234,7 @@ public class FullFlow5000UsersActualDbTest {
                         .build();
 
                 RoleResponse roleRes = authService.switchRole(principal, RoleSelectionRequest.builder().role("organizer").build());
-                assertEquals("organizer", roleRes.getRole());
+                assertTrue(roleRes.getRoles().contains("organizer"));
             }
             case 3 -> {
                 // Journey 4: Standard Sign-Up + Password Sign-In -> Refresh Token
@@ -277,11 +277,11 @@ public class FullFlow5000UsersActualDbTest {
         Long localUsers = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM users WHERE auth_provider = 'LOCAL'", Long.class);
         Long captains = jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM users WHERE active_role = 'CAPTAIN'", Long.class);
+                "SELECT count(*) FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE r.name = 'CAPTAIN'", Long.class);
         Long organizers = jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM users WHERE active_role = 'ORGANIZER'", Long.class);
+                "SELECT count(*) FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE r.name = 'ORGANIZER'", Long.class);
         Long players = jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM users WHERE active_role = 'PLAYER'", Long.class);
+                "SELECT count(*) FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE r.name = 'PLAYER'", Long.class);
 
         log.info("================================================================================");
         log.info("ACTUAL POSTGRESQL DATABASE VERIFICATION (NOT CLEARED - PERSISTED IN DB)");
@@ -294,6 +294,19 @@ public class FullFlow5000UsersActualDbTest {
         log.info("  ├── ORGANIZERS                      : {}", organizers);
         log.info("  └── PLAYERS                         : {}", players);
         log.info("Total Refresh Tokens in DB            : {}", totalRefreshTokens);
+
+        // Ensure sample Email OTP records are also kept in DB for inspection
+        authService.sendOtp(SendOtpRequest.builder().identifier("virat.sample@cricauction.in").purpose("login").build());
+        authService.sendOtp(SendOtpRequest.builder().identifier("rohit.sample@cricauction.in").purpose("login").build());
+        authService.sendOtp(SendOtpRequest.builder().identifier("jasprit.sample@cricauction.in").purpose("password_reset").build());
+
+        Long totalOtps = jdbcTemplate.queryForObject("SELECT count(*) FROM otp_verifications", Long.class);
+        Long emailOtps = jdbcTemplate.queryForObject("SELECT count(*) FROM otp_verifications WHERE email IS NOT NULL", Long.class);
+        Long mobileOtps = jdbcTemplate.queryForObject("SELECT count(*) FROM otp_verifications WHERE mobile IS NOT NULL", Long.class);
+
+        log.info("Total OTP Records in 'otp_verifications' Table : {}", totalOtps);
+        log.info("  ├── Email OTPs (email IS NOT NULL)           : {}", emailOtps);
+        log.info("  └── Mobile OTPs (mobile IS NOT NULL)         : {}", mobileOtps);
         log.info("================================================================================");
 
         assertTrue(totalUsers != null && totalUsers >= TOTAL_USERS,

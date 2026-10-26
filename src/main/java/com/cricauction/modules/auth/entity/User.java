@@ -1,12 +1,14 @@
 package com.cricauction.modules.auth.entity;
 
-import com.cricauction.modules.auth.entity.enums.UserRole;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.Instant;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 @Entity
 @Table(name = "users")
@@ -33,10 +35,14 @@ public class User {
     @Column(name = "password_hash")
     private String passwordHash;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "active_role", nullable = false, length = 20)
+    @ManyToMany(fetch = FetchType.EAGER)
+    @JoinTable(
+            name = "user_roles",
+            joinColumns = @JoinColumn(name = "user_id"),
+            inverseJoinColumns = @JoinColumn(name = "role_id")
+    )
     @Builder.Default
-    private UserRole activeRole = UserRole.PLAYER;
+    private Set<Role> roles = new HashSet<>();
 
     @Enumerated(EnumType.STRING)
     @Column(name = "auth_provider", nullable = false, length = 20)
@@ -74,6 +80,31 @@ public class User {
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
+
+    public void addRole(Role role) {
+        if (this.roles == null) {
+            this.roles = new HashSet<>();
+        }
+        if (role != null) {
+            this.roles.add(role);
+        }
+    }
+
+    public void removeRole(Role role) {
+        if (this.roles != null) {
+            this.roles.remove(role);
+        }
+    }
+
+    public List<String> getRoleNames() {
+        if (this.roles == null || this.roles.isEmpty()) {
+            return List.of("player");
+        }
+        return this.roles.stream()
+                .map(r -> r.getName().getValue())
+                .sorted()
+                .toList();
+    }
 
     public String getPublicUserId() {
         return "usr_" + id;

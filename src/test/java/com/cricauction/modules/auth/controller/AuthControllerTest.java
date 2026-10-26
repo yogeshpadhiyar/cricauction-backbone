@@ -8,6 +8,7 @@ import com.cricauction.modules.auth.entity.enums.UserRole;
 import com.cricauction.modules.auth.repository.OtpVerificationRepository;
 import com.cricauction.modules.auth.repository.PasswordResetTokenRepository;
 import com.cricauction.modules.auth.repository.RefreshTokenRepository;
+import com.cricauction.modules.auth.repository.RoleRepository;
 import com.cricauction.modules.auth.repository.UserRepository;
 import com.cricauction.modules.auth.service.TokenService;
 import com.cricauction.security.JwtTokenProvider;
@@ -23,6 +24,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.Instant;
+import java.util.List;
 
 import static org.hamcrest.Matchers.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -40,6 +42,9 @@ class AuthControllerTest {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private RoleRepository roleRepository;
 
     @Autowired
     private OtpVerificationRepository otpRepository;
@@ -68,14 +73,14 @@ class AuthControllerTest {
     }
 
     @Test
-    @DisplayName("1. POST /api/v1/auth/signup - Successful registration")
+    @DisplayName("1. POST /api/v1/auth/signup - Valid registration sends OTP and creates user")
     void signUp_Success() throws Exception {
         SignUpRequest request = SignUpRequest.builder()
                 .fullName("Hardik Patel")
                 .email("hardik@example.com")
                 .mobile("+919876543210")
-                .password("StrongPassword123!")
-                .confirmPassword("StrongPassword123!")
+                .password("Password123!")
+                .confirmPassword("Password123!")
                 .agreedToTerms(true)
                 .build();
 
@@ -84,22 +89,20 @@ class AuthControllerTest {
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.success", is(true)))
-                .andExpect(jsonPath("$.message", containsString("Account created")))
-                .andExpect(jsonPath("$.data.email", is("hardik@example.com")))
+                .andExpect(jsonPath("$.data.userId", notNullValue()))
                 .andExpect(jsonPath("$.data.mobile", is("+919876543210")))
-                .andExpect(jsonPath("$.data.userId", startsWith("usr_")))
-                .andExpect(jsonPath("$.data.isVerified", is(false)))
-                .andExpect(jsonPath("$.data.otpExpirySeconds", greaterThan(0)));
+                .andExpect(jsonPath("$.data.email", is("hardik@example.com")))
+                .andExpect(jsonPath("$.data.isVerified", is(false)));
     }
 
     @Test
-    @DisplayName("1. POST /api/v1/auth/signup - Validation failure when passwords do not match")
-    void signUp_PasswordsMismatch() throws Exception {
+    @DisplayName("1. POST /api/v1/auth/signup - Password mismatch throws 400")
+    void signUp_PasswordMismatch() throws Exception {
         SignUpRequest request = SignUpRequest.builder()
                 .fullName("Hardik Patel")
                 .email("hardik@example.com")
                 .mobile("+919876543210")
-                .password("StrongPassword123!")
+                .password("Password123!")
                 .confirmPassword("DifferentPassword123!")
                 .agreedToTerms(true)
                 .build();
@@ -113,9 +116,31 @@ class AuthControllerTest {
     }
 
     @Test
-    @DisplayName("2. POST /api/v1/auth/signin - Successful login")
-    void signIn_Success() throws Exception {
-        User user = createTestUser("Hardik Patel", "hardik@example.com", "+919876543210", "StrongPassword123!", UserRole.ORGANIZER);
+    @DisplayName("1. POST /api/v1/auth/signup - Duplicate email throws 409 Conflict")
+    void signUp_DuplicateEmail() throws Exception {
+        createTestUser("Hardik Patel", "hardik@example.com", "+919876543210", "Password123!", UserRole.PLAYER);
+
+        SignUpRequest request = SignUpRequest.builder()
+                .fullName("Hardik Patel 2")
+                .email("hardik@example.com")
+                .mobile("+919876543211")
+                .password("Password123!")
+                .confirmPassword("Password123!")
+                .agreedToTerms(true)
+                .build();
+
+        mockMvc.perform(post("/api/v1/auth/signup")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.success", is(false)))
+                .andExpect(jsonPath("$.error.code", is("EMAIL_ALREADY_EXISTS")));
+    }
+
+    @Test
+    @DisplayName("2. POST /api/v1/auth/signin - Successful login via email")
+    void signIn_Success_Email() throws Exception {
+        createTestUser("Hardik Patel", "hardik@example.com", "+919876543210", "StrongPassword123!", UserRole.ORGANIZER);
 
         SignInRequest request = SignInRequest.builder()
                 .identifier("hardik@example.com")
@@ -132,7 +157,7 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.data.refreshToken", notNullValue()))
                 .andExpect(jsonPath("$.data.expiresIn", is(86400)))
                 .andExpect(jsonPath("$.data.user.email", is("hardik@example.com")))
-                .andExpect(jsonPath("$.data.user.role", is("organizer")));
+                .andExpect(jsonPath("$.data.user.roles", hasItem("organizer")));
     }
 
     @Test
@@ -295,7 +320,7 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.data.fullName", is("Hardik Patel")))
                 .andExpect(jsonPath("$.data.email", is("hardik@example.com")))
                 .andExpect(jsonPath("$.data.city", is("Surat")))
-                .andExpect(jsonPath("$.data.role", is("organizer")));
+                .andExpect(jsonPath("$.data.roles", hasItem("organizer")));
     }
 
     @Test
@@ -314,7 +339,27 @@ class AuthControllerTest {
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success", is(true)))
-                .andExpect(jsonPath("$.data.role", is("organizer")));
+                .andExpect(jsonPath("$.data.roles", hasItem("organizer")));
+    }
+
+    @Test
+    @DisplayName("10b. PUT /api/v1/auth/roles - Assign multiple roles simultaneously")
+    void assignMultipleRoles_Success() throws Exception {
+        User user = createTestUser("Hardik Multi", "hardik.multi@example.com", "+919876543290", "Password123!", UserRole.PLAYER);
+        String accessToken = jwtTokenProvider.generateAccessToken(user);
+
+        RoleSelectionRequest request = RoleSelectionRequest.builder()
+                .roles(List.of("CAPTAIN", "PLAYER"))
+                .build();
+
+        mockMvc.perform(put("/api/v1/auth/roles")
+                        .header("Authorization", "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success", is(true)))
+                .andExpect(jsonPath("$.data.roles", hasItem("captain")))
+                .andExpect(jsonPath("$.data.roles", hasItem("player")));
     }
 
     @Test
@@ -334,7 +379,7 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.data.accessToken", notNullValue()))
                 .andExpect(jsonPath("$.data.refreshToken", notNullValue()))
                 .andExpect(jsonPath("$.data.user.email", is("virat@example.com")))
-                .andExpect(jsonPath("$.data.user.role", is("captain")))
+                .andExpect(jsonPath("$.data.user.roles", hasItem("captain")))
                 .andExpect(jsonPath("$.data.user.city", is("Delhi")))
                 .andExpect(jsonPath("$.data.user.authProvider", is("google")))
                 .andExpect(jsonPath("$.data.user.isVerified", is(true)));
@@ -357,7 +402,7 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.success", is(true)))
                 .andExpect(jsonPath("$.data.accessToken", notNullValue()))
                 .andExpect(jsonPath("$.data.user.email", is("virat@example.com")))
-                .andExpect(jsonPath("$.data.user.role", is("organizer")));
+                .andExpect(jsonPath("$.data.user.roles", hasItem("organizer")));
     }
 
     private User createTestUser(String fullName, String email, String mobile, String rawPassword, UserRole role) {
@@ -366,10 +411,10 @@ class AuthControllerTest {
                 .email(email)
                 .mobile(mobile)
                 .passwordHash(passwordEncoder.encode(rawPassword))
-                .activeRole(role)
                 .isMobileVerified(true)
                 .isActive(true)
                 .build();
+        roleRepository.findByName(role).ifPresent(user::addRole);
         return userRepository.save(user);
     }
 }

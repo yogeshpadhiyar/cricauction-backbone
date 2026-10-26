@@ -25,6 +25,13 @@ public interface OtpVerificationRepository extends JpaRepository<OtpVerification
     @Query("DELETE FROM OtpVerification o WHERE (o.identifier = :mobile OR o.mobile = :mobile) AND o.purpose = :purpose")
     void deleteByMobileAndPurpose(@Param("mobile") String mobile, @Param("purpose") String purpose);
 
+    @Query("SELECT o FROM OtpVerification o WHERE (o.identifier = :email OR o.email = :email) AND o.purpose = :purpose")
+    Optional<OtpVerification> findByEmailAndPurpose(@Param("email") String email, @Param("purpose") String purpose);
+
+    @Modifying
+    @Query("DELETE FROM OtpVerification o WHERE (o.identifier = :email OR o.email = :email) AND o.purpose = :purpose")
+    void deleteByEmailAndPurpose(@Param("email") String email, @Param("purpose") String purpose);
+
     @Modifying
     @Query("DELETE FROM OtpVerification o WHERE o.expiresAt < :now")
     void deleteExpiredOtps(@Param("now") Instant now);

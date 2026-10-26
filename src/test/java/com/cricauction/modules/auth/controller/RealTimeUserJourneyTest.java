@@ -138,7 +138,7 @@ public class RealTimeUserJourneyTest {
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.mobile", is(mobile)))
-                .andExpect(jsonPath("$.data.role", is("player")));
+                .andExpect(jsonPath("$.data.roles", hasItem("player")));
     }
 
     @Test
@@ -178,7 +178,7 @@ public class RealTimeUserJourneyTest {
                 .andExpect(jsonPath("$.success", is(true)))
                 .andExpect(jsonPath("$.data.accessToken", notNullValue()))
                 .andExpect(jsonPath("$.data.user.email", is(email)))
-                .andExpect(jsonPath("$.data.user.role", is("captain")))
+                .andExpect(jsonPath("$.data.user.roles", hasItem("captain")))
                 .andExpect(jsonPath("$.data.user.isVerified", is(true)))
                 .andReturn();
 
@@ -195,7 +195,7 @@ public class RealTimeUserJourneyTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(roleRequest)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.role", is("organizer")));
+                .andExpect(jsonPath("$.data.roles", hasItem("organizer")));
     }
 
     @Test

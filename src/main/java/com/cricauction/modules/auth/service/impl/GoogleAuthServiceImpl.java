@@ -5,9 +5,11 @@ import com.cricauction.modules.auth.dto.request.GoogleAuthRequest;
 import com.cricauction.modules.auth.dto.response.AuthResponse;
 import com.cricauction.modules.auth.dto.response.GoogleUserInfo;
 import com.cricauction.modules.auth.dto.response.UserProfileResponse;
+import com.cricauction.modules.auth.entity.Role;
 import com.cricauction.modules.auth.entity.User;
 import com.cricauction.modules.auth.entity.enums.AuthProvider;
 import com.cricauction.modules.auth.entity.enums.UserRole;
+import com.cricauction.modules.auth.repository.RoleRepository;
 import com.cricauction.modules.auth.repository.UserRepository;
 import com.cricauction.modules.auth.service.GoogleAuthService;
 import com.cricauction.modules.auth.service.GoogleTokenVerifier;
@@ -27,6 +29,7 @@ public class GoogleAuthServiceImpl implements GoogleAuthService {
 
     private final GoogleTokenVerifier googleTokenVerifier;
     private final UserRepository userRepository;
+    private final RoleRepository roleRepository;
     private final TokenService tokenService;
     private final JwtTokenProvider jwtTokenProvider;
 
@@ -81,7 +84,6 @@ public class GoogleAuthServiceImpl implements GoogleAuthService {
                     .email(googleUser.getEmail())
                     .googleId(googleUser.getSub())
                     .authProvider(AuthProvider.GOOGLE)
-                    .activeRole(role)
                     .city(request.getCity())
                     .mobile(request.getMobile())
                     .profilePhotoUrl(googleUser.getPicture())
@@ -90,6 +92,10 @@ public class GoogleAuthServiceImpl implements GoogleAuthService {
                     .isActive(true)
                     .build();
 
+            UserRole finalRole = role;
+            Role roleEntity = roleRepository.findByName(finalRole)
+                    .orElseGet(() -> roleRepository.save(Role.builder().name(finalRole).build()));
+            user.addRole(roleEntity);
             user = userRepository.save(user);
             log.info("New user registered via Google OAuth: ID [{}], email [{}]", user.getId(), user.getEmail());
         }

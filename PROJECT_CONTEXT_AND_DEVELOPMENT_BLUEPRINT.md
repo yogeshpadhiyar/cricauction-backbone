@@ -107,7 +107,7 @@ erDiagram
 
 | Table Name | Type | Key Columns | Primary Responsibility |
 |---|---|---|---|
-| `users` | Standard WAL | `id`, `full_name`, `email`, `mobile`, `password_hash`, `active_role`, `auth_provider`, `google_id`, `is_email_verified`, `is_mobile_verified`, `city`, `profile_photo_url`, `bio` | Core user entity and auth credentials across all roles. |
+| `users` | Standard WAL | `id`, `full_name`, `email`, `mobile`, `password_hash`, `auth_provider`, `google_id`, `is_email_verified`, `is_mobile_verified`, `city`, `profile_photo_url`, `bio` | Core user entity and auth credentials across all roles. |
 | `otp_verifications` | Standard WAL | `(identifier, purpose)`, `otp_code`, `attempts`, `expires_at` | TTL-based OTP records supporting mobile numbers and email addresses. |
 | `refresh_tokens` | Standard WAL | `id`, `token`, `user_id`, `expires_at`, `revoked` | Cryptographic refresh tokens for rotating JWT access tokens. |
 | `password_reset_tokens` | Standard WAL | `token`, `user_id`, `expires_at`, `used` | Single-use password reset verification tokens. |
@@ -306,3 +306,51 @@ For **every development task** going forward:
    - Request/response schemas, DTOs, and database tables added or modified.
    - Verification and load test outcomes.
 3. **Master Blueprint Update**: Update this file (`PROJECT_CONTEXT_AND_DEVELOPMENT_BLUEPRINT.md`) with the latest completion statuses, entity changes, and API additions.
+
+
+---
+
+## 8. Multi-Role RBAC Domain Refactoring (Flyway V5)
+
+### 8.1 Multi-Role Architectural Requirement
+In standard sporting auction setups, individuals hold diverse functional roles simultaneously:
+- A user can be both a **PLAYER** participating in player pools and a **CAPTAIN** actively drafting squad members.
+- A user can be an **ORGANIZER** creating tournament stages while also playing as a **PLAYER**.
+
+To support this without arbitrary role swapping, the role subsystem has been normalized into a Many-to-Many architecture:
+
+```mermaid
+erDiagram
+    users ||--o{ user_roles : "holds (Many-to-Many)"
+    roles ||--o{ user_roles : "defines"
+
+    roles {
+        serial id PK
+        varchar(50) name UK "ORGANIZER, CAPTAIN, PLAYER"
+        timestamp created_at
+    }
+
+    user_roles {
+        bigint user_id PK, FK
+        integer role_id PK, FK
+        timestamp assigned_at
+    }
+
+    users {
+        bigserial id PK
+        varchar(100) full_name
+        varchar(150) email UK
+        varchar(20) mobile UK
+    }
+```
+
+### 8.2 Database Evolution (`V5` & `V6` Migrations)
+1. **`roles` Table (`V5`)**: Contains canonical roles: `'ORGANIZER'`, `'CAPTAIN'`, `'PLAYER'`.
+2. **`user_roles` Mapping Table (`V5`)**: Composite primary key `(user_id, role_id)`, `ON DELETE CASCADE` foreign keys, and indexes on both foreign keys.
+3. **Data Migration (`V5`)**: Migrated all users into `user_roles` without data loss.
+4. **Drop `active_role` (`V6__drop_active_role_from_users.sql`)**: Completely removed the redundant `active_role` column from the `users` table, ensuring pure 3NF normalization and eliminating dual-source-of-truth discrepancies.
+
+### 8.3 Contract Enhancements
+- **`UserProfileResponse`**: Exposes `roles: List<String>` containing all assigned roles (e.g. `["captain", "player"]`), alongside primary `role: String`.
+- **API 10**: Refactored to `PATCH /api/v1/auth/role` and `PUT /api/v1/auth/roles` accepting `roles: ["CAPTAIN", "PLAYER"]` to assign multiple roles at once or append via `role: "ORGANIZER"`.
+- **Security Context**: `UserPrincipal` maps each associated role from `user_roles` into Spring Security `GrantedAuthority` (`ROLE_ORGANIZER`, `ROLE_CAPTAIN`, `ROLE_PLAYER`).

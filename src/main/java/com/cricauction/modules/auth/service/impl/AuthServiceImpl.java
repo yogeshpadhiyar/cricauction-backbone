@@ -6,8 +6,10 @@ import com.cricauction.common.exception.ResourceNotFoundException;
 import com.cricauction.common.exception.UnauthorizedException;
 import com.cricauction.modules.auth.dto.request.*;
 import com.cricauction.modules.auth.dto.response.*;
+import com.cricauction.modules.auth.entity.Role;
 import com.cricauction.modules.auth.entity.User;
 import com.cricauction.modules.auth.entity.enums.UserRole;
+import com.cricauction.modules.auth.repository.RoleRepository;
 import com.cricauction.modules.auth.repository.UserRepository;
 import com.cricauction.modules.auth.service.AuthService;
 import com.cricauction.modules.auth.service.OtpService;
@@ -20,8 +22,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -29,6 +33,7 @@ import java.util.Optional;
 public class AuthServiceImpl implements AuthService {
 
     private final UserRepository userRepository;
+    private final RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
     private final OtpService otpService;
     private final TokenService tokenService;
@@ -71,10 +76,13 @@ public class AuthServiceImpl implements AuthService {
                 .email(email)
                 .mobile(mobile)
                 .passwordHash(encodedPassword)
-                .activeRole(UserRole.PLAYER)
                 .isMobileVerified(false)
                 .isActive(true)
                 .build();
+
+        Role roleEntity = roleRepository.findByName(UserRole.PLAYER)
+                .orElseGet(() -> roleRepository.save(Role.builder().name(UserRole.PLAYER).build()));
+        user.addRole(roleEntity);
 
         User savedUser = userRepository.save(user);
 
@@ -147,11 +155,13 @@ public class AuthServiceImpl implements AuthService {
                         .fullName(isEmail ? target.substring(0, target.indexOf("@")) : "User " + target.substring(Math.max(0, target.length() - 4)))
                         .email(isEmail ? target : null)
                         .mobile(isEmail ? null : target)
-                        .activeRole(UserRole.PLAYER)
                         .isEmailVerified(isEmail)
                         .isMobileVerified(!isEmail)
                         .isActive(true)
                         .build();
+                Role roleEntity = roleRepository.findByName(UserRole.PLAYER)
+                        .orElseGet(() -> roleRepository.save(Role.builder().name(UserRole.PLAYER).build()));
+                newUser.addRole(roleEntity);
                 return userRepository.save(newUser);
             });
 
@@ -215,18 +225,21 @@ public class AuthServiceImpl implements AuthService {
                 } catch (Exception ignored) {}
             }
 
+            final UserRole assignedRole = role;
             boolean isEmail = target.contains("@");
             user = User.builder()
                     .fullName(isEmail ? target.substring(0, target.indexOf("@")) : "User " + target.substring(Math.max(0, target.length() - 4)))
                     .email(isEmail ? target : null)
                     .mobile(isEmail ? null : target)
-                    .activeRole(role)
                     .city(request.getCity())
                     .authProvider(com.cricauction.modules.auth.entity.enums.AuthProvider.LOCAL)
                     .isEmailVerified(isEmail)
                     .isMobileVerified(!isEmail)
                     .isActive(true)
                     .build();
+            Role roleEntity = roleRepository.findByName(assignedRole)
+                    .orElseGet(() -> roleRepository.save(Role.builder().name(assignedRole).build()));
+            user.addRole(roleEntity);
             user = userRepository.save(user);
         }
 
@@ -295,16 +308,38 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public RoleResponse switchRole(UserPrincipal currentUser, RoleSelectionRequest request) {
-        UserRole newRole = UserRole.fromString(request.getRole());
-
         User user = userRepository.findById(currentUser.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("USER_NOT_FOUND", "User not found."));
 
-        user.setActiveRole(newRole);
+        if (request.getRoles() != null && !request.getRoles().isEmpty()) {
+            Set<Role> newRoles = new HashSet<>();
+            for (String rStr : request.getRoles()) {
+                UserRole ur = UserRole.fromString(rStr);
+                if (ur != null) {
+                    final UserRole targetRole = ur;
+                    Role roleEntity = roleRepository.findByName(targetRole)
+                            .orElseGet(() -> roleRepository.save(Role.builder().name(targetRole).build()));
+                    newRoles.add(roleEntity);
+                }
+            }
+            if (newRoles.isEmpty()) {
+                throw new BadRequestException("INVALID_ROLE", "No valid roles provided.");
+            }
+            user.setRoles(newRoles);
+        } else if (request.getRole() != null && !request.getRole().isBlank()) {
+            final UserRole newRole = UserRole.fromString(request.getRole());
+            Role roleEntity = roleRepository.findByName(newRole)
+                    .orElseGet(() -> roleRepository.save(Role.builder().name(newRole).build()));
+            user.addRole(roleEntity);
+        } else {
+            throw new BadRequestException("INVALID_ROLE_REQUEST", "Either 'roles' list or 'role' string must be provided.");
+        }
+
         userRepository.save(user);
 
+        List<String> roleNames = user.getRoleNames();
         return RoleResponse.builder()
-                .role(newRole.getValue())
+                .roles(roleNames)
                 .build();
     }
 

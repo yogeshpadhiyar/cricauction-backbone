@@ -9,6 +9,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 @Data
 @Builder
 @NoArgsConstructor
@@ -19,7 +21,7 @@ public class UserProfileResponse {
     private String fullName;
     private String email;
     private String mobile;
-    private String role;
+    private List<String> roles;
     private String authProvider;
     private String city;
     private String bio;
@@ -35,12 +37,14 @@ public class UserProfileResponse {
     }
 
     public static UserProfileResponse fromEntity(User user, PlayerProfile playerProfile) {
+        List<String> roleList = user.getRoleNames();
+
         return UserProfileResponse.builder()
                 .id(user.getPublicUserId())
                 .fullName(user.getFullName())
                 .email(user.getEmail())
                 .mobile(user.getMobile())
-                .role(user.getActiveRole().getValue())
+                .roles(roleList)
                 .authProvider(user.getAuthProvider() != null ? user.getAuthProvider().getValue() : "local")
                 .city(user.getCity())
                 .bio(user.getBio())

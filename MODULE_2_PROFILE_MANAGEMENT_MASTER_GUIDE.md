@@ -343,6 +343,7 @@ Base URL: `http://localhost:8080/api/v1`
     "email": "hardik@example.com",
     "mobile": "+919876543210",
     "bio": "Hard-hitting top order batsman with 5 years local cricket experience.",
+    "roles": ["player"],
     "role": "player",
     "authProvider": "local",
     "city": "Surat",

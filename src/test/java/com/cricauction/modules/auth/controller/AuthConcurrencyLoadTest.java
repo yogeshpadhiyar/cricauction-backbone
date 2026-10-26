@@ -7,6 +7,8 @@ import com.cricauction.modules.auth.entity.enums.UserRole;
 import com.cricauction.modules.auth.repository.OtpVerificationRepository;
 import com.cricauction.modules.auth.repository.PasswordResetTokenRepository;
 import com.cricauction.modules.auth.repository.RefreshTokenRepository;
+import com.cricauction.modules.auth.entity.Role;
+import com.cricauction.modules.auth.repository.RoleRepository;
 import com.cricauction.modules.auth.repository.UserRepository;
 import com.cricauction.security.JwtTokenProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -54,6 +56,9 @@ public class AuthConcurrencyLoadTest {
     private UserRepository userRepository;
 
     @Autowired
+    private RoleRepository roleRepository;
+
+    @Autowired
     private RefreshTokenRepository refreshTokenRepository;
 
     @Autowired
@@ -89,10 +94,11 @@ public class AuthConcurrencyLoadTest {
                 .email("player_loadtest@example.com")
                 .mobile("+919999900000")
                 .passwordHash(passwordEncoder.encode("SecurePass123!"))
-                .activeRole(UserRole.PLAYER)
                 .isMobileVerified(true)
                 .isActive(true)
                 .build();
+        Role role1 = roleRepository.findByName(UserRole.PLAYER).orElseGet(() -> roleRepository.save(Role.builder().name(UserRole.PLAYER).build()));
+        user.addRole(role1);
         userRepository.save(user);
 
         SignInRequest signInRequest = SignInRequest.builder()
@@ -185,10 +191,11 @@ public class AuthConcurrencyLoadTest {
                 .email("auction_loadtest@example.com")
                 .mobile("+919999900001")
                 .passwordHash(passwordEncoder.encode("Pass123!"))
-                .activeRole(UserRole.CAPTAIN)
                 .isMobileVerified(true)
                 .isActive(true)
                 .build();
+        Role role2 = roleRepository.findByName(UserRole.CAPTAIN).orElseGet(() -> roleRepository.save(Role.builder().name(UserRole.CAPTAIN).build()));
+        user.addRole(role2);
         user = userRepository.save(user);
 
         String accessToken = jwtTokenProvider.generateAccessToken(user);
@@ -266,10 +273,11 @@ public class AuthConcurrencyLoadTest {
                 .email("google_loadtest@example.com")
                 .googleId("google_sub_loadtest_123")
                 .authProvider(com.cricauction.modules.auth.entity.enums.AuthProvider.GOOGLE)
-                .activeRole(UserRole.PLAYER)
                 .isEmailVerified(true)
                 .isActive(true)
                 .build();
+        Role role3 = roleRepository.findByName(UserRole.PLAYER).orElseGet(() -> roleRepository.save(Role.builder().name(UserRole.PLAYER).build()));
+        user.addRole(role3);
         userRepository.save(user);
 
         GoogleAuthRequest googleRequest = GoogleAuthRequest.builder()

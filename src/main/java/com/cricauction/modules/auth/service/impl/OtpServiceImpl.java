@@ -60,14 +60,21 @@ public class OtpServiceImpl implements OtpService {
         String otpCode = String.format("%06d", ThreadLocalRandom.current().nextInt(1_000_000));
         Instant expiresAt = Instant.now().plusSeconds(otpExpirationSeconds);
 
+        boolean isEmail = target.contains("@");
         OtpVerification otpVerification = existingOpt.orElseGet(() ->
                 OtpVerification.builder()
                         .identifier(target)
-                        .mobile(target.contains("@") ? null : target)
+                        .email(isEmail ? target : null)
+                        .mobile(isEmail ? null : target)
                         .purpose(normalizedPurpose)
                         .build()
         );
 
+        if (isEmail) {
+            otpVerification.setEmail(target);
+        } else {
+            otpVerification.setMobile(target);
+        }
         otpVerification.setOtpCode(otpCode);
         otpVerification.setAttempts(0);
         otpVerification.setExpiresAt(expiresAt);

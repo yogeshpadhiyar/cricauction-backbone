@@ -71,7 +71,7 @@ public class ProfileConcurrency5000UsersActualDbTest {
 
         // Fetch 5,000 real user records from PostgreSQL
         List<Map<String, Object>> userRows = jdbcTemplate.queryForList(
-                "SELECT id, full_name, email, mobile, active_role FROM users ORDER BY id ASC LIMIT ?", TOTAL_USERS
+                "SELECT id, full_name, email, mobile FROM users ORDER BY id ASC LIMIT ?", TOTAL_USERS
         );
 
         assertTrue(userRows.size() >= TOTAL_USERS,
@@ -97,7 +97,7 @@ public class ProfileConcurrency5000UsersActualDbTest {
                 final String fullName = (String) userRow.get("full_name");
                 final String email = (String) userRow.get("email");
                 final String mobile = (String) userRow.get("mobile");
-                final String roleStr = (String) userRow.get("active_role");
+                final String roleStr = "player";
 
                 UserPrincipal principal = UserPrincipal.builder()
                         .id(userId)
