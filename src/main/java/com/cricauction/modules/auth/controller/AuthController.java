@@ -5,6 +5,7 @@ import com.cricauction.modules.auth.dto.request.*;
 import com.cricauction.modules.auth.dto.response.*;
 import com.cricauction.modules.auth.service.AuthService;
 import com.cricauction.security.UserPrincipal;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/v1/auth")
 @RequiredArgsConstructor
+@Tag(name = "Authentication & User Management", description = "User sign-up, sign-in, password management, and role switching APIs")
 public class AuthController {
 
     private final AuthService authService;

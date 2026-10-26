@@ -53,6 +53,21 @@ public class UserPrincipal implements UserDetails {
                 .build();
     }
 
+    public boolean hasRole(String roleName) {
+        if (roleName == null || roleName.isBlank()) {
+            return false;
+        }
+        String normalized = roleName.trim().toLowerCase();
+        boolean matchInRoles = roles != null && roles.stream().anyMatch(r -> r.equalsIgnoreCase(normalized));
+        boolean matchInAuth = authorities != null && authorities.stream()
+                .anyMatch(a -> a.getAuthority().equalsIgnoreCase("ROLE_" + normalized));
+        return matchInRoles || matchInAuth;
+    }
+
+    public boolean isOrganizer() {
+        return hasRole("organizer");
+    }
+
     @Override
     public String getUsername() {
         return mobile != null ? mobile : email;

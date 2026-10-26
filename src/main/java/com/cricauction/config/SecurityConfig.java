@@ -50,6 +50,7 @@ public class SecurityConfig {
                                 "/api/v1/auth/otp/**",
                                 "/api/v1/auth/password/**",
                                 "/api/v1/auth/refresh-token",
+                                "/api/v1/tournaments/public/**",
                                 "/v3/api-docs/**",
                                 "/swagger-ui/**",
                                 "/swagger-ui.html",
@@ -58,7 +59,8 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/api/v1/auth/logout",
                                 "/api/v1/auth/me",
-                                "/api/v1/auth/role"
+                                "/api/v1/auth/role",
+                                "/api/v1/tournaments/**"
                         ).authenticated()
                         .anyRequest().authenticated()
                 )

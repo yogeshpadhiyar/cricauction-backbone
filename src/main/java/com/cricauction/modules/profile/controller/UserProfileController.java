@@ -24,7 +24,7 @@ import org.springframework.web.multipart.MultipartFile;
 @RestController
 @RequestMapping("/api/v1/users")
 @RequiredArgsConstructor
-@Tag(name = "Module 2: Profile & Cricket Profile Management", description = "User personal profile, photo upload, and cricket stats APIs")
+@Tag(name = "Profile & Cricket Profile Management", description = "User personal profile, photo upload, and cricket stats APIs")
 @SecurityRequirement(name = "bearerAuth")
 public class UserProfileController {
 
