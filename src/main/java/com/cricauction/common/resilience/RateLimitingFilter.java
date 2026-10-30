@@ -9,6 +9,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -24,6 +25,9 @@ public class RateLimitingFilter extends OncePerRequestFilter {
     private final RateLimiter rateLimiter;
     private final ObjectMapper objectMapper;
 
+    @Value("${cricauction.security.rate-limit.bypass-enabled:false}")
+    private boolean bypassEnabled;
+
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
@@ -33,7 +37,9 @@ public class RateLimitingFilter extends OncePerRequestFilter {
         String bypass = request.getHeader("X-Bypass-Rate-Limit");
         String uri = request.getRequestURI();
 
-        if ("true".equalsIgnoreCase(bypass) || uri.contains("/actuator") || uri.contains("/swagger-ui") || uri.contains("/v3/api-docs")) {
+        boolean isBypassed = bypassEnabled && "true".equalsIgnoreCase(bypass);
+
+        if (isBypassed || uri.contains("/actuator") || uri.contains("/swagger-ui") || uri.contains("/v3/api-docs")) {
             filterChain.doFilter(request, response);
             return;
         }

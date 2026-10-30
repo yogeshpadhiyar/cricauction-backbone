@@ -24,19 +24,23 @@ public class TeamSummaryResponse {
     private Long totalBudget;
     private String inviteCode;
 
-    public static TeamSummaryResponse fromEntity(Team team, int squadCount) {
+    public static TeamSummaryResponse fromEntity(Team team, int squadCount, boolean isOrganizer) {
         return TeamSummaryResponse.builder()
                 .id(team.getId())
                 .name(team.getName())
                 .shortCode(team.getShortCode())
                 .logoUrl(team.getLogoUrl())
                 .captainName(team.getCaptainName() != null ? team.getCaptainName() : "")
-                .captainMobile(team.getCaptainMobile() != null ? team.getCaptainMobile() : "")
+                .captainMobile(isOrganizer && team.getCaptainMobile() != null ? team.getCaptainMobile() : "")
                 .status(team.getStatus())
                 .squadCount(squadCount)
                 .remainingBudget(team.getRemainingBudget())
                 .totalBudget(team.getInitialBudget())
-                .inviteCode(team.getInviteCode())
+                .inviteCode(isOrganizer ? team.getInviteCode() : null)
                 .build();
+    }
+
+    public static TeamSummaryResponse fromEntity(Team team, int squadCount) {
+        return fromEntity(team, squadCount, false);
     }
 }

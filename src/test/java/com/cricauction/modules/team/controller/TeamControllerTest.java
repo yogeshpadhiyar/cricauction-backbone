@@ -754,4 +754,60 @@ public class TeamControllerTest {
         assertFalse(hasCaptainRole, "ROLE_CAPTAIN must NOT be granted when application is rejected");
         assertEquals(0, squadMemberRepository.countByTeamId(appliedTeamId));
     }
+@Test
+    @DisplayName("Security: Non-organizer cannot view team inviteCode or unmasked captain mobile in API 26")
+    void testNonOrganizerCannotViewInviteCode() throws Exception {
+        AddTeamRequest req = AddTeamRequest.builder()
+                .name("Secret Paltan")
+                .captainName("Test Captain")
+                .captainMobile("+919876543210")
+                .build();
+
+        mockMvc.perform(post("/api/v1/tournaments/" + tournamentId + "/teams")
+                        .header("Authorization", "Bearer " + organizerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isCreated());
+
+        // 1. Organizer sees the inviteCode
+        mockMvc.perform(get("/api/v1/tournaments/" + tournamentId + "/teams")
+                        .header("Authorization", "Bearer " + organizerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.teams[0].inviteCode", notNullValue()))
+                .andExpect(jsonPath("$.data.teams[0].captainMobile", is("+919876543210")));
+
+        // 2. Regular player user CANNOT see the inviteCode (must be null) and captain mobile is masked/empty
+        mockMvc.perform(get("/api/v1/tournaments/" + tournamentId + "/teams")
+                        .header("Authorization", "Bearer " + playerToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.teams[0].inviteCode", nullValue()))
+                .andExpect(jsonPath("$.data.teams[0].captainMobile", is("")));
+    }
+
+    @Test
+    @DisplayName("Security: updateTeamProfileJson enforces @Valid length limits on team name")
+    void testUpdateTeamProfileValidation() throws Exception {
+        Team team = Team.builder()
+                .tournament(tournamentEntity)
+                .name("Valid Team")
+                .shortCode("VT")
+                .captainId(organizerUser.getId())
+                .status("Accepted")
+                .initialBudget(100_000_000L)
+                .remainingBudget(100_000_000L)
+                .inviteCode("VT-INV-1")
+                .build();
+        team = teamRepository.save(team);
+
+        // Oversized name > 100 characters must fail validation
+        TeamProfileUpdateRequest oversized = TeamProfileUpdateRequest.builder()
+                .name("A".repeat(101))
+                .build();
+
+        mockMvc.perform(patch("/api/v1/teams/" + team.getId() + "/profile")
+                        .header("Authorization", "Bearer " + organizerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(oversized)))
+                .andExpect(status().isBadRequest());
+    }
 }

@@ -27,6 +27,13 @@ public class LocalFileStorageStrategy implements FileStorageStrategy {
             "image/jpg"
     );
 
+    private static final List<String> ALLOWED_IMAGE_EXTENSIONS = List.of(
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp"
+    );
+
     private static final long MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
 
     @Value("${cricauction.storage.local.base-dir:./uploads}")
@@ -59,7 +66,13 @@ public class LocalFileStorageStrategy implements FileStorageStrategy {
         String originalFilename = file.getOriginalFilename();
         String extension = ".jpg";
         if (originalFilename != null && originalFilename.contains(".")) {
-            extension = originalFilename.substring(originalFilename.lastIndexOf(".")).toLowerCase();
+            String candidateExt = originalFilename.substring(originalFilename.lastIndexOf(".")).toLowerCase();
+            if (ALLOWED_IMAGE_EXTENSIONS.contains(candidateExt)) {
+                extension = candidateExt;
+            } else {
+                throw new BadRequestException("UNSUPPORTED_MEDIA_TYPE",
+                        "Invalid image file extension. Allowed extensions: .jpg, .jpeg, .png, .webp");
+            }
         }
 
         String safeFileName = UUID.randomUUID().toString().replace("-", "") + extension;

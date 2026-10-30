@@ -43,17 +43,24 @@ public class ProfileServiceImpl implements ProfileService {
         if (currentUser == null || currentUser.getId() == null) {
             throw new UnauthorizedException("UNAUTHORIZED", "Authentication required to view profile.");
         }
-        return getUserProfileById(currentUser.getId());
+        return getUserProfileById(currentUser, currentUser.getId());
     }
 
     @Override
     @Transactional(readOnly = true)
     public UserProfileResponse getUserProfileById(Long userId) {
+        return getUserProfileById(null, userId);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public UserProfileResponse getUserProfileById(UserPrincipal currentUser, Long userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("USER_NOT_FOUND", "User profile not found for ID: " + userId));
 
         PlayerProfile playerProfile = playerProfileRepository.findByUserId(userId).orElse(null);
-        return UserProfileResponse.fromEntity(user, playerProfile);
+        boolean isSelfOrAdmin = currentUser != null && (currentUser.getId().equals(userId) || currentUser.hasRole("admin"));
+        return UserProfileResponse.fromEntity(user, playerProfile, isSelfOrAdmin);
     }
 
     @Override

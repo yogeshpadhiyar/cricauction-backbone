@@ -26,6 +26,9 @@ public class GoogleTokenVerifierImpl implements GoogleTokenVerifier {
     @Value("${cricauction.security.google.client-id:}")
     private String expectedClientId;
 
+    @Value("${cricauction.security.google.allow-mock-tokens:false}")
+    private boolean allowMockTokens;
+
     private final RestClient restClient = RestClient.builder()
             .requestFactory(createClientHttpRequestFactory())
             .baseUrl("https://oauth2.googleapis.com")
@@ -44,8 +47,8 @@ public class GoogleTokenVerifierImpl implements GoogleTokenVerifier {
             throw new UnauthorizedException("INVALID_GOOGLE_TOKEN", "Google ID token cannot be empty.");
         }
 
-        // Fast-path support for test / mock tokens in load tests and automated test suites
-        if (idToken.startsWith("test-google-token-") || idToken.startsWith("mock-google-token-")) {
+        // Fast-path support for test / mock tokens in load tests and automated test suites (strictly gated by configuration)
+        if (allowMockTokens && (idToken.startsWith("test-google-token-") || idToken.startsWith("mock-google-token-"))) {
             return parseMockToken(idToken);
         }
 
@@ -62,41 +65,41 @@ public class GoogleTokenVerifierImpl implements GoogleTokenVerifier {
 
                         JsonNode root = objectMapper.readTree(response);
 
-            // Verify audience if configured
-            if (expectedClientId != null && !expectedClientId.isBlank()) {
-                String aud = root.path("aud").asText();
-                if (!expectedClientId.equals(aud)) {
-                    log.warn("Google token audience mismatch. Expected: {}, Actual: {}", expectedClientId, aud);
-                    throw new UnauthorizedException("INVALID_GOOGLE_TOKEN", "Google token audience mismatch.");
-                }
-            }
+                        // Verify audience if configured
+                        if (expectedClientId != null && !expectedClientId.isBlank()) {
+                            String aud = root.path("aud").asText();
+                            if (!expectedClientId.equals(aud)) {
+                                log.warn("Google token audience mismatch. Expected: {}, Actual: {}", expectedClientId, aud);
+                                throw new UnauthorizedException("INVALID_GOOGLE_TOKEN", "Google token audience mismatch.");
+                            }
+                        }
 
-            String email = root.path("email").asText();
-            String sub = root.path("sub").asText();
-            boolean emailVerified = root.path("email_verified").asBoolean(false)
-                    || "true".equalsIgnoreCase(root.path("email_verified").asText());
-            String name = root.path("name").asText(email);
-            String picture = root.path("picture").asText(null);
+                        String email = root.path("email").asText();
+                        String sub = root.path("sub").asText();
+                        boolean emailVerified = root.path("email_verified").asBoolean(false)
+                                || "true".equalsIgnoreCase(root.path("email_verified").asText());
+                        String name = root.path("name").asText(email);
+                        String picture = root.path("picture").asText(null);
 
-            if (email == null || email.isBlank() || sub == null || sub.isBlank()) {
-                throw new UnauthorizedException("INVALID_GOOGLE_TOKEN", "Google token missing required claims (email or sub).");
-            }
+                        if (email == null || email.isBlank() || sub == null || sub.isBlank()) {
+                            throw new UnauthorizedException("INVALID_GOOGLE_TOKEN", "Google token missing required claims (email or sub).");
+                        }
 
-                    return GoogleUserInfo.builder()
-                            .sub(sub)
-                            .email(email.toLowerCase().trim())
-                            .emailVerified(emailVerified)
-                            .name(name)
-                            .picture(picture)
-                            .build();
+                        return GoogleUserInfo.builder()
+                                .sub(sub)
+                                .email(email.toLowerCase().trim())
+                                .emailVerified(emailVerified)
+                                .name(name)
+                                .picture(picture)
+                                .build();
 
-                } catch (UnauthorizedException e) {
-                    throw e;
-                } catch (Exception e) {
-                    log.error("Failed to verify Google token with Google OAuth2 servers: {}", e.getMessage());
-                    throw new UnauthorizedException("INVALID_GOOGLE_TOKEN", "Invalid or expired Google token: " + e.getMessage());
-                }
-            }), null);
+                    } catch (UnauthorizedException e) {
+                        throw e;
+                    } catch (Exception e) {
+                        log.error("Failed to verify Google token with Google OAuth2 servers: {}", e.getMessage());
+                        throw new UnauthorizedException("INVALID_GOOGLE_TOKEN", "Invalid or expired Google token: " + e.getMessage());
+                    }
+                }), null);
     }
 
     private GoogleUserInfo parseMockToken(String mockToken) {

@@ -12,16 +12,21 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Positive;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 @Slf4j
 @RestController
+@Validated
+@PreAuthorize("isAuthenticated()")
 @RequestMapping("/api/v1/users")
 @RequiredArgsConstructor
 @Tag(name = "Profile & Cricket Profile Management", description = "User personal profile, photo upload, and cricket stats APIs")
@@ -39,12 +44,13 @@ public class UserProfileController {
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
-    // 11b. View Any User Profile By ID (Unified: Returns full account info + cricket stats)
+    // 11b. View Any User Profile By ID (Unified: Returns full account info + cricket stats with PII protection)
     @GetMapping("/{userId}/profile")
     @Operation(summary = "11b. View Any User Profile", description = "Allows an authenticated user to view another user's public profile and cricket stats by userId")
     public ResponseEntity<ApiResponse<UserProfileResponse>> getUserProfileById(
-            @PathVariable Long userId) {
-        UserProfileResponse response = profileService.getUserProfileById(userId);
+            @AuthenticationPrincipal UserPrincipal currentUser,
+            @PathVariable("userId") @Positive(message = "User ID must be a positive number") Long userId) {
+        UserProfileResponse response = profileService.getUserProfileById(currentUser, userId);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 

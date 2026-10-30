@@ -28,8 +28,11 @@ cricauction:
       secret: cricauction_very_long_secure_secret_key_that_exceeds_256_bits_for_hmac_sha256!
       access-token-expiration-ms: 86400000
       refresh-token-expiration-ms: 604800000
+    rate-limit:
+      bypass-enabled: true
     google:
       client-id: test-client-id
+      allow-mock-tokens: true
     otp:
       expiration-seconds: 300
       retry-after-seconds: 45

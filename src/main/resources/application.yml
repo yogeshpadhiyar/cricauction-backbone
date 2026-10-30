@@ -57,8 +57,13 @@ cricauction:
       secret: ${JWT_SECRET:cricauction_very_long_secure_secret_key_that_exceeds_256_bits_for_hmac_sha256!}
       access-token-expiration-ms: 86400000 # 24 hours (86400s)
       refresh-token-expiration-ms: 604800000 # 7 days
+    cors:
+      allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173,http://localhost:8080,https://*.cricauction.app,https://*.cricauction.com}
+    rate-limit:
+      bypass-enabled: ${RATE_LIMIT_BYPASS_ENABLED:false}
     google:
       client-id: ${GOOGLE_CLIENT_ID:}
+      allow-mock-tokens: ${GOOGLE_ALLOW_MOCK_TOKENS:false}
     otp:
       expiration-seconds: 300
       retry-after-seconds: 45
@@ -67,9 +72,9 @@ cricauction:
       token-expiration-minutes: 15
 
 springdoc:
-    api-docs:
-      enabled: true
-      path: /v3/api-docs
-    swagger-ui:
-      enabled: true
-      path: /swagger-ui.html
+  api-docs:
+    enabled: true
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html

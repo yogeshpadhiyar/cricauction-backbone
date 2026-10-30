@@ -14,6 +14,8 @@ public interface ProfileService {
 
     UserProfileResponse getUserProfileById(Long userId);
 
+    UserProfileResponse getUserProfileById(UserPrincipal currentUser, Long userId);
+
     UserProfileResponse updateUserProfile(UserPrincipal currentUser, UpdateUserProfileRequest request);
 
     ProfilePhotoUploadResponse uploadProfilePhoto(UserPrincipal currentUser, MultipartFile file);

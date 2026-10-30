@@ -58,10 +58,12 @@ public class TeamServiceImpl implements TeamService {
                 .filter(t -> t.getCaptainId() != null || "Accepted".equalsIgnoreCase(t.getStatus()))
                 .count();
 
+        boolean isOrganizer = currentUser != null && tournament.getOrganizerId().equals(currentUser.getId());
+
         List<TeamSummaryResponse> teamResponses = teams.stream()
                 .map(t -> {
                     int squadCount = (int) squadMemberRepository.countByTeamId(t.getId());
-                    return TeamSummaryResponse.fromEntity(t, squadCount);
+                    return TeamSummaryResponse.fromEntity(t, squadCount, isOrganizer);
                 })
                 .toList();
 
@@ -147,7 +149,7 @@ public class TeamServiceImpl implements TeamService {
         int squadCount = (int) squadMemberRepository.countByTeamId(updated.getId());
 
         log.info("Team [{}] details updated by Organizer [{}]", updated.getId(), currentUser.getId());
-        return TeamSummaryResponse.fromEntity(updated, squadCount);
+        return TeamSummaryResponse.fromEntity(updated, squadCount, true);
     }
 
     @Override
@@ -400,7 +402,7 @@ public class TeamServiceImpl implements TeamService {
         return pendingTeams.stream()
                 .map(t -> {
                     int squadCount = (int) squadMemberRepository.countByTeamId(t.getId());
-                    return TeamSummaryResponse.fromEntity(t, squadCount);
+                    return TeamSummaryResponse.fromEntity(t, squadCount, true);
                 })
                 .toList();
     }
@@ -589,7 +591,8 @@ public class TeamServiceImpl implements TeamService {
         int squadCount = (int) squadMemberRepository.countByTeamId(updated.getId());
 
         log.info("Team [{}] branding updated by User [{}]", updated.getId(), currentUser.getId());
-        return TeamSummaryResponse.fromEntity(updated, squadCount);
+        boolean isOrganizer = currentUser != null && team.getTournament().getOrganizerId().equals(currentUser.getId());
+        return TeamSummaryResponse.fromEntity(updated, squadCount, isOrganizer);
     }
 
     private Tournament findTournamentByIdentifier(String idOrSlug) {

@@ -33,17 +33,21 @@ public class UserProfileResponse {
     private PlayerProfileResponse playerProfile;
 
     public static UserProfileResponse fromEntity(User user) {
-        return fromEntity(user, null);
+        return fromEntity(user, null, true);
     }
 
     public static UserProfileResponse fromEntity(User user, PlayerProfile playerProfile) {
+        return fromEntity(user, playerProfile, true);
+    }
+
+    public static UserProfileResponse fromEntity(User user, PlayerProfile playerProfile, boolean isSelfOrAdmin) {
         List<String> roleList = user.getRoleNames();
 
         return UserProfileResponse.builder()
                 .id(user.getPublicUserId())
                 .fullName(user.getFullName())
-                .email(user.getEmail())
-                .mobile(user.getMobile())
+                .email(isSelfOrAdmin ? user.getEmail() : null)
+                .mobile(isSelfOrAdmin ? user.getMobile() : null)
                 .roles(roleList)
                 .authProvider(user.getAuthProvider() != null ? user.getAuthProvider().getValue() : "local")
                 .city(user.getCity())

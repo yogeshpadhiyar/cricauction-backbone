@@ -12,16 +12,18 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.ThreadLocalRandom;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class OtpServiceImpl implements OtpService {
+
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     private final OtpVerificationRepository otpRepository;
     private final List<OtpDeliveryStrategy> deliveryStrategies;
@@ -56,8 +58,8 @@ public class OtpServiceImpl implements OtpService {
             }
         }
 
-        // Generate 6-digit numeric OTP using lock-free ThreadLocalRandom
-        String otpCode = String.format("%06d", ThreadLocalRandom.current().nextInt(1_000_000));
+        // Generate 6-digit numeric OTP using cryptographically secure SecureRandom
+        String otpCode = String.format("%06d", SECURE_RANDOM.nextInt(1_000_000));
         Instant expiresAt = Instant.now().plusSeconds(otpExpirationSeconds);
 
         boolean isEmail = target.contains("@");

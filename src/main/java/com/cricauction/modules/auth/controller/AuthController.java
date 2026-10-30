@@ -10,9 +10,12 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+@Validated
 @RestController
 @RequestMapping("/api/v1/auth")
 @RequiredArgsConstructor
@@ -73,8 +76,7 @@ public class AuthController {
     @PostMapping("/otp/send")
     public ResponseEntity<ApiResponse<SendOtpResponse>> sendOtp(@Valid @RequestBody SendOtpRequest request) {
         SendOtpResponse response = authService.sendOtp(request);
-        return ResponseEntity.ok(ApiResponse.success(
-                "OTP sent successfully to " + request.getTargetIdentifier(), response));
+        return ResponseEntity.ok(ApiResponse.success("OTP sent successfully", response));
     }
 
     /**
@@ -122,6 +124,7 @@ public class AuthController {
      * POST /api/v1/auth/logout
      */
     @PostMapping("/logout")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<ApiResponse<Void>> logout(
             @AuthenticationPrincipal UserPrincipal currentUser,
             @RequestBody(required = false) LogoutRequest request) {
@@ -134,6 +137,7 @@ public class AuthController {
      * GET /api/v1/auth/me
      */
     @GetMapping("/me")
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<ApiResponse<UserProfileResponse>> getCurrentUser(
             @AuthenticationPrincipal UserPrincipal currentUser) {
         UserProfileResponse response = authService.getCurrentUser(currentUser);
@@ -146,6 +150,7 @@ public class AuthController {
      * PUT /api/v1/auth/roles
      */
     @RequestMapping(value = {"/role", "/roles"}, method = {RequestMethod.PATCH, RequestMethod.PUT})
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<ApiResponse<RoleResponse>> switchRole(
             @AuthenticationPrincipal UserPrincipal currentUser,
             @Valid @RequestBody RoleSelectionRequest request) {

@@ -3,6 +3,8 @@ package com.cricauction.common.exception;
 import com.cricauction.common.api.ApiError;
 import com.cricauction.common.api.ApiResponse;
 import com.cricauction.common.api.ErrorDetail;
+import jakarta.validation.ConstraintViolation;
+import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -12,6 +14,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -39,6 +42,37 @@ public class GlobalExceptionHandler {
 
         log.warn("Validation failed for request: {}", details);
         ApiError error = ApiError.of("VALIDATION_FAILED", "One or more validation constraints failed", details);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.error(error));
+    }
+
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<ApiResponse<Void>> handleConstraintViolationException(ConstraintViolationException ex) {
+        List<ErrorDetail> details = new ArrayList<>();
+        for (ConstraintViolation<?> violation : ex.getConstraintViolations()) {
+            String propertyPath = violation.getPropertyPath() != null ? violation.getPropertyPath().toString() : "";
+            String field = propertyPath.contains(".") ? propertyPath.substring(propertyPath.lastIndexOf('.') + 1) : propertyPath;
+            details.add(ErrorDetail.builder()
+                    .field(field)
+                    .issue(violation.getMessage())
+                    .build());
+        }
+
+        log.warn("Constraint violation failed for request: {}", details);
+        ApiError error = ApiError.of("VALIDATION_FAILED", "One or more validation constraints failed", details);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.error(error));
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMethodArgumentTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        String field = ex.getName();
+        String issue = String.format("Parameter '%s' should be of type %s", field, ex.getRequiredType() != null ? ex.getRequiredType().getSimpleName() : "valid type");
+        ErrorDetail detail = ErrorDetail.builder()
+                .field(field)
+                .issue(issue)
+                .build();
+
+        log.warn("Argument type mismatch: {}", detail);
+        ApiError error = ApiError.of("INVALID_PARAMETER", "Invalid parameter type provided", List.of(detail));
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.error(error));
     }
 
