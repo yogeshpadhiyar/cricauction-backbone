@@ -810,4 +810,48 @@ public class TeamControllerTest {
                         .content(objectMapper.writeValueAsString(oversized)))
                 .andExpect(status().isBadRequest());
     }
+
+    @Test
+    @DisplayName("Security: Captain cannot claim multiple teams in same tournament via inviteCode (SEC-TEAM-MULTI-CAPTAIN-COLLUSION)")
+    void testCaptainCannotClaimMultipleTeamsInSameTournament() throws Exception {
+        // Team 1: already captained by playerUser
+        Team team1 = Team.builder()
+                .tournament(tournamentEntity)
+                .name("Team One")
+                .shortCode("T1")
+                .captainId(playerUser.getId())
+                .status("Accepted")
+                .initialBudget(100_000_000L)
+                .remainingBudget(100_000_000L)
+                .inviteCode("T1-INV-123")
+                .build();
+        teamRepository.save(team1);
+
+        // Team 2: has invite code, currently unassigned
+        Team team2 = Team.builder()
+                .tournament(tournamentEntity)
+                .name("Team Two")
+                .shortCode("T2")
+                .captainId(null)
+                .status("Invited")
+                .initialBudget(100_000_000L)
+                .remainingBudget(100_000_000L)
+                .inviteCode("T2-INV-456")
+                .build();
+        teamRepository.save(team2);
+
+        // playerUser attempts to join Team 2
+        JoinTeamRequest request = JoinTeamRequest.builder()
+                .inviteCode("T2-INV-456")
+                .captainMobile("+919876543211")
+                .build();
+
+        mockMvc.perform(post("/api/v1/teams/join")
+                        .header("Authorization", "Bearer " + playerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.success", is(false)))
+                .andExpect(jsonPath("$.error.code", is("ALREADY_A_CAPTAIN")));
+    }
 }

@@ -1,7 +1,7 @@
 # CricAuction Module 5: Team & Captain Management
 ## Comprehensive Technical Architecture & Developer Reference Manual
 
-> **Document Status**: Production Complete | Tested against PostgreSQL 18+ | 5,000 Concurrent Operations Benchmark Verified (100.00% Success Rate, 126.71 RPS on Live DB)  
+> **Document Status**: Production Complete & Bottlenecks Optimized | Tested against PostgreSQL 18+ | 83/83 Automated Tests Passing (0 Failures, 0 Errors, 0 Skipped) | 5,000 Concurrent Operations Benchmark Verified (100.00% Success Rate, 690.51 RPS on Live DB - 5.45x Throughput Improvement)  
 > **Audience**: Backend Engineers, DevOps, System Architects, Security Auditors  
 > **Maintainer**: CricAuction Engineering Team  
 
@@ -44,6 +44,12 @@
     - [11.3 Latency Distribution & Tiers Categorization](#113-latency-distribution--tiers-categorization)
     - [11.4 Micro-Bottleneck Anatomy & Optimization Solutions](#114-micro-bottleneck-anatomy--optimization-solutions)
     - [11.5 Summary Comparison Matrix](#115-summary-comparison-matrix)
+12. [Master-Replica Read/Write Database Splitting Architecture](#12-master-replica-readwrite-database-splitting-architecture)
+    - [12.1 Motivation & High-Load Risk Mitigation](#121-motivation--high-load-risk-mitigation)
+    - [12.2 Enterprise Master-Replica Architecture Design](#122-enterprise-master-replica-architecture-design)
+    - [12.3 Dynamic Routing Flow & Lazy Connection Leasing](#123-dynamic-routing-flow--lazy-connection-leasing)
+    - [12.4 Configuration & Production Deployment Parameters](#124-configuration--production-deployment-parameters)
+    - [12.5 Automated Test Verification & Live Benchmark Metrics](#125-automated-test-verification--live-benchmark-metrics)
 
 ---
 
@@ -268,11 +274,31 @@ When claiming a team via `POST /teams/join`:
 2. If `status` is already `Accepted` and `captainId != currentUser.id`, the operation immediately raises `ConflictException("TEAM_ALREADY_CLAIMED")`.
 3. PostgreSQL transactions commit the `captainId` update atomically, preventing two concurrent users from claiming the same team.
 
+### 5.5 Multi-Team Captain Prevention & Live Collusion Defense (`SEC-TEAM-MULTI-CAPTAIN-COLLUSION`)
+To prevent a single user from controlling multiple competing teams during live bidding:
+1. **Read & Micro-Write Dual Guard**: Both [`TeamQueryService.validateJoinTeam`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/team/service/TeamQueryService.java) and [`TeamPersistenceService.executeJoinTeam`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/team/service/TeamPersistenceService.java) assert:
+   ```java
+   if (teamRepository.existsByTournamentIdAndCaptainId(team.getTournament().getId(), currentUser.getId())
+           && (team.getCaptainId() == null || !team.getCaptainId().equals(currentUser.getId()))) {
+       throw new ConflictException("ALREADY_A_CAPTAIN", "You are already registered as a captain for a team in this tournament.");
+   }
+   ```
+2. **Database Engine Partial Unique Constraint**: Enforced at the PostgreSQL level via Flyway V7, ensuring database-level integrity even across simultaneous race windows.
+
 ---
 
-## 6. Database Schema & Migration Walkthrough (Flyway V3)
+## 6. Database Schema & Migration Walkthrough (Flyway V3, V6 & V7)
 
-The schema was applied via Flyway migration `V3__create_teams_and_squad_schema.sql`:
+The core schema was initialized in `V3__create_teams_and_squad_schema.sql`, optimized for read queries in `V6__optimize_teams_and_squads_indexes.sql`, and hardened with multi-captain constraints in `V7__add_unique_captain_per_team_constraint.sql`:
+
+```sql
+-- Flyway V7: Enforce unique captain per tournament
+CREATE UNIQUE INDEX IF NOT EXISTS idx_teams_tournament_captain
+ON teams(tournament_id, captain_id)
+WHERE captain_id IS NOT NULL;
+```
+
+### Table Definitions (V3):
 
 ```sql
 -- 1. Create Teams Table
@@ -802,26 +828,43 @@ A dedicated load test suite (`TeamConcurrency5000UsersActualDbTest.java`) was ex
 
 ### Benchmark Results:
 
+#### Post-Optimization Concurrency Verification (5,000 Virtual Threads on Actual PostgreSQL)
+
+Following the implementation of bulk squad count aggregation (`countSquadMembersByTeamIds`) and composite database covering indexes (`idx_teams_tournament_status_id`, `idx_teams_tournament_id`, `idx_teams_tournament_status_created`), the 5,000 concurrent operations benchmark showed a **5.45x increase in throughput** and an **~80% reduction in average latency**:
+
 ```
 ================================================================================
-MODULE 5 CONCURRENCY BENCHMARK RESULTS (5,000 CONCURRENT VIRTUAL THREADS)
+MODULE 5 CONCURRENCY BENCHMARK RESULTS (5,000 CONCURRENT VIRTUAL THREADS - OPTIMIZED)
 ================================================================================
 Total Concurrent Operations : 5000
 Successful Operations        : 5000
 Failed Operations            : 0
 Success Rate                 : 100.00%
-Total Elapsed Time           : 39461 ms (39.46 s)
-Throughput (Throughput RPS)  : 126.71 req/sec
+Total Elapsed Time           : 7241 ms (7.24 s)   [Down from 39.46s -> 5.4x Faster!]
+Throughput (Throughput RPS)  : 690.51 req/sec      [Up from 126.71 RPS -> 5.45x Higher!]
 Latency Metrics (Wall Clock):
-  ├── Min Latency            : 76 ms
-  ├── Average Latency        : 20641.09 ms
-  ├── Median (p50) Latency   : 20986 ms
-  ├── 90th Percentile (p90)  : 35682 ms
-  ├── 95th Percentile (p95)  : 37464 ms
-  ├── 99th Percentile (p99)  : 39024 ms
-  └── Max Latency            : 39374 ms
+  ├── Min Latency            : 113 ms
+  ├── Average Latency        : 4214.73 ms          [Down from 20,641 ms -> 79.6% Reduction!]
+  ├── Median (p50) Latency   : 4350 ms             [Down from 20,986 ms -> 79.3% Reduction!]
+  ├── 90th Percentile (p90)  : 6617 ms             [Down from 35,682 ms -> 81.5% Reduction!]
+  ├── 95th Percentile (p95)  : 6821 ms             [Down from 37,464 ms -> 81.8% Reduction!]
+  ├── 99th Percentile (p99)  : 7105 ms             [Down from 39,024 ms -> 81.8% Reduction!]
+  └── Max Latency            : 7139 ms             [Down from 39,374 ms -> 81.9% Reduction!]
 ================================================================================
 ```
+
+#### Pre-Optimization vs Post-Optimization Comparison (5,000 Operations):
+
+| Performance Metric | Pre-Optimization Baseline | Post-Optimization (Batch Aggregation & Indexes) | Improvement Factor |
+| :--- | :---: | :---: | :---: |
+| **Total Test Drain Time** | 39.46 seconds | **7.24 seconds** | **5.45x faster** |
+| **System Throughput** | 126.71 req/sec | **690.51 req/sec** | **+445% (5.45x)** |
+| **Average Wall-Clock Latency** | 20,641.09 ms | **4,214.73 ms** | **-79.6% latency** |
+| **P50 (Median) Latency** | 20,986 ms | **4,350 ms** | **-79.3% latency** |
+| **P90 Latency** | 35,682 ms | **6,617 ms** | **-81.5% latency** |
+| **P99 Latency** | 39,024 ms | **7,105 ms** | **-81.8% latency** |
+| **Max Wait Latency** | 39,374 ms | **7,139 ms** | **-81.9% latency** |
+| **Operation Success Rate** | 100.00% (5,000 / 5,000) | **100.00% (5,000 / 5,000)** | **Zero Errors / Zero Drops** |
 
 ### PostgreSQL Live Data Verification:
 
@@ -1006,39 +1049,54 @@ In high-concurrency environments, viewing overall latency aggregate numbers can 
 
 ### 11.2 Individual API Latency Results (Tables)
 
-#### Table 1: Baseline Isolated Execution Latency (Zero Pool Contention)
+#### Table 1: Baseline Isolated Execution Latency (Post-Optimization)
 
 | API ID | Endpoint Name | HTTP Method & Path | Total Samples | Min (ms) | Avg (ms) | P50 (ms) | P90 (ms) | P95 (ms) | P99 (ms) | Max (ms) | Throughput (RPS) |
 | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **API 32** | Get Team Squad Roster | `GET /teams/{teamId}/squad` | 100 | 0.18 | **0.22** | 0.21 | 0.26 | 0.29 | 0.34 | 0.34 | **4,574.7** |
-| **API 30** | Send Captain Invite | `POST /tournaments/{id}/teams/{teamId}/invite` | 100 | 0.17 | **0.28** | 0.20 | 0.40 | 0.47 | 0.60 | 0.60 | **3,587.3** |
-| **API 33** | Update Team Branding | `PUT /teams/{teamId}/profile` | 100 | 0.24 | **0.39** | 0.38 | 0.44 | 0.51 | 0.59 | 0.59 | **2,589.2** |
-| **API 29** | Delete Team | `DELETE /tournaments/{id}/teams/{teamId}` | 45 | 0.36 | **0.44** | 0.43 | 0.56 | 0.58 | 0.59 | 0.59 | **2,109.5** |
-| **API 28** | Update Team Details | `PUT /tournaments/{id}/teams/{teamId}` | 100 | 0.28 | **0.46** | 0.44 | 0.57 | 0.69 | 1.47 | 1.47 | **2,152.6** |
-| **API 31d** | Review Captain Request | `POST /tournaments/{id}/teams/{teamId}/captain-approval` | 25 | 0.37 | **0.60** | 0.47 | 0.85 | 0.87 | 1.00 | 1.00 | **1,530.7** |
-| **API 31b** | Captain Self-Registration | `POST /tournaments/{id}/teams/register-captain` | 45 | 0.56 | **0.68** | 0.62 | 0.88 | 0.99 | 1.15 | 1.15 | **1,365.9** |
-| **API 31** | Accept Captain Invite | `POST /teams/join` | 50 | 0.68 | **0.89** | 0.84 | 1.17 | 1.19 | 1.37 | 1.37 | **1,121.9** |
-| **API 27** | Add New Team | `POST /tournaments/{id}/teams` | 100 | 1.43 | **1.96** | 1.90 | 2.36 | 2.73 | 3.39 | 3.39 | **510.7** |
-| **API 31c** | List Pending Captains | `GET /tournaments/{id}/teams/captain-requests` | 100 | 4.37 | **5.03** | 4.96 | 5.54 | 5.78 | 6.29 | 6.29 | **198.6** |
-| **API 26** | List Tournament Teams | `GET /tournaments/{id}/teams` | 100 | 10.05 | **12.30** | 11.15 | 14.38 | 17.47 | 37.13 | 37.13 | **81.3** |
+| **API 32** | Get Team Squad Roster | `GET /api/v1/teams/{teamId}/squad` | 100 | 0.21 | **0.26** | 0.24 | 0.31 | 0.38 | 0.59 | 0.59 | **3,841.3** |
+| **API 30** | Send Captain Invite | `POST /api/v1/tournaments/{id}/teams/{teamId}/invite` | 100 | 0.19 | **0.36** | 0.25 | 0.63 | 0.78 | 1.08 | 1.08 | **2,776.3** |
+| **API 33** | Update Team Branding | `PUT /api/v1/teams/{teamId}/profile` | 100 | 0.28 | **0.41** | 0.38 | 0.53 | 0.56 | 1.08 | 1.08 | **2,461.9** |
+| **API 29** | Delete Team | `DELETE /api/v1/tournaments/{id}/teams/{teamId}` | 45 | 0.39 | **0.50** | 0.47 | 0.63 | 0.73 | 0.80 | 0.80 | **1,876.8** |
+| **API 28** | Update Team Details | `PUT /api/v1/tournaments/{id}/teams/{teamId}` | 100 | 0.35 | **0.56** | 0.55 | 0.72 | 0.84 | 1.22 | 1.22 | **1,785.1** |
+| **API 31d** | Review Captain Request | `POST /api/v1/tournaments/{id}/teams/{teamId}/captain-approval` | 25 | 0.37 | **0.62** | 0.52 | 0.95 | 0.97 | 0.98 | 0.98 | **1,492.6** |
+| **API 31b** | Captain Self-Registration | `POST /api/v1/tournaments/{id}/teams/register-captain` | 45 | 0.61 | **0.70** | 0.65 | 0.87 | 0.90 | 1.01 | 1.01 | **1,324.7** |
+| **API 31** | Accept Captain Invite | `POST /api/v1/teams/join` | 50 | 0.75 | **0.98** | 0.91 | 1.22 | 1.41 | 2.70 | 2.70 | **1,019.9** |
+| **API 31c** | List Pending Captains | `GET /api/v1/tournaments/{id}/teams/captain-requests` | 100 | 0.90 | **1.38** | 1.08 | 1.80 | 3.49 | 9.91 | 9.91 | **725.3** |
+| **API 27** | Add New Team | `POST /api/v1/tournaments/{id}/teams` | 100 | 1.47 | **2.06** | 1.98 | 2.59 | 2.78 | 3.58 | 3.58 | **485.3** |
+| **API 26** | List Tournament Teams | `GET /api/v1/tournaments/{id}/teams` | 100 | 2.82 | **4.07** | 3.92 | 5.19 | 6.08 | 7.94 | 7.94 | **245.8** |
 
 ---
 
-#### Table 2: Concurrent Execution Latency (20–25 Virtual Threads, Pool Contention)
+#### Table 2: Concurrent Execution Latency (20–25 Virtual Threads - Post-Optimization)
 
 | API ID | Endpoint Name | HTTP Method & Path | Total Samples | Min (ms) | Avg (ms) | P50 (ms) | P90 (ms) | P95 (ms) | P99 (ms) | Max (ms) | Throughput (RPS) |
 | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **API 29** | Delete Team | `DELETE /tournaments/{id}/teams/{teamId}` | 80 | 1.26 | **2.04** | 1.94 | 2.61 | 2.75 | 3.01 | 3.01 | **4,738.5** |
-| **API 30** | Send Captain Invite | `POST /tournaments/{id}/teams/{teamId}/invite` | 200 | 0.35 | **2.76** | 2.74 | 3.62 | 3.93 | 4.23 | 4.35 | **8,854.1** |
-| **API 32** | Get Team Squad Roster | `GET /teams/{teamId}/squad` | 200 | 1.88 | **3.70** | 3.74 | 4.78 | 4.94 | 5.35 | 5.45 | **6,600.5** |
-| **API 31d** | Review Captain Request | `POST /tournaments/{id}/teams/{teamId}/captain-approval` | 50 | 0.96 | **3.58** | 2.36 | 9.31 | 10.79 | 10.93 | 10.93 | **2,690.8** |
-| **API 33** | Update Team Branding | `PUT /teams/{teamId}/profile` | 165 | 1.55 | **4.08** | 3.25 | 6.60 | 9.54 | 12.38 | 28.48 | **3,977.5** |
-| **API 28** | Update Team Details | `PUT /tournaments/{id}/teams/{teamId}` | 200 | 3.08 | **5.49** | 5.35 | 7.04 | 7.46 | 9.24 | 10.33 | **4,443.4** |
-| **API 31b** | Captain Self-Registration | `POST /tournaments/{id}/teams/register-captain` | 100 | 1.92 | **5.82** | 5.94 | 7.17 | 7.43 | 9.10 | 9.10 | **3,294.6** |
-| **API 31** | Accept Captain Invite | `POST /teams/join` | 100 | 2.52 | **10.01** | 9.17 | 22.20 | 22.91 | 24.43 | 24.43 | **1,945.9** |
-| **API 27** | Add New Team | `POST /tournaments/{id}/teams` | 200 | 6.81 | **13.97** | 11.96 | 27.36 | 29.49 | 36.57 | 36.93 | **1,736.7** |
-| **API 31c** | List Pending Captains | `GET /tournaments/{id}/teams/captain-requests` | 200 | 5.66 | **55.25** | 55.22 | 99.17 | 103.90 | 107.76 | 139.65 | **446.2** |
-| **API 26** | List Tournament Teams | `GET /tournaments/{id}/teams` | 200 | 14.40 | **131.71** | 134.92 | 210.41 | 224.00 | 275.69 | 276.21 | **185.5** |
+| **API 29** | Delete Team | `DELETE /api/v1/tournaments/{id}/teams/{teamId}` | 80 | 1.44 | **2.09** | 2.10 | 2.41 | 2.59 | 3.06 | 3.06 | **4,684.2** |
+| **API 30** | Send Captain Invite | `POST /api/v1/tournaments/{id}/teams/{teamId}/invite` | 200 | 0.75 | **2.81** | 2.77 | 3.46 | 3.63 | 4.27 | 4.30 | **8,707.4** |
+| **API 31d** | Review Captain Request | `POST /api/v1/tournaments/{id}/teams/{teamId}/captain-approval` | 50 | 2.57 | **3.73** | 3.64 | 4.74 | 5.04 | 5.06 | 5.06 | **2,641.3** |
+| **API 32** | Get Team Squad Roster | `GET /api/v1/teams/{teamId}/squad` | 200 | 1.45 | **3.95** | 3.75 | 5.37 | 5.70 | 6.45 | 32.93 | **6,068.5** |
+| **API 33** | Update Team Branding | `PUT /api/v1/teams/{teamId}/profile` | 140 | 2.68 | **5.35** | 5.14 | 6.93 | 7.14 | 8.10 | 8.41 | **3,217.2** |
+| **API 31b** | Captain Self-Registration | `POST /api/v1/tournaments/{id}/teams/register-captain` | 100 | 3.76 | **5.42** | 5.41 | 6.44 | 6.97 | 7.33 | 7.33 | **3,555.4** |
+| **API 28** | Update Team Details | `PUT /api/v1/tournaments/{id}/teams/{teamId}` | 196 | 3.55 | **7.72** | 6.66 | 16.93 | 17.99 | 31.10 | 32.05 | **2,968.5** |
+| **API 31** | Accept Captain Invite | `POST /api/v1/teams/join` | 100 | 5.68 | **10.78** | 10.54 | 13.54 | 14.27 | 16.76 | 16.76 | **1,784.9** |
+| **API 31c** | List Pending Captains | `GET /api/v1/tournaments/{id}/teams/captain-requests` | 200 | 6.28 | **10.37** | 9.70 | 12.65 | 13.14 | 19.23 | 86.02 | **2,323.2** |
+| **API 27** | Add New Team | `POST /api/v1/tournaments/{id}/teams` | 200 | 3.53 | **17.60** | 14.15 | 34.92 | 41.44 | 56.36 | 61.04 | **1,373.2** |
+| **API 26** | List Tournament Teams | `GET /api/v1/tournaments/{id}/teams` | 200 | 5.10 | **25.83** | 24.60 | 38.02 | 41.73 | 55.59 | 65.04 | **922.3** |
+
+---
+
+#### Bottleneck Elimination Summary (Tier 3 Critical Endpoints Before vs After):
+
+| Critical Endpoint | Metric | Before Optimization | After Optimization | Realized Performance Gain |
+| :--- | :--- | :---: | :---: | :--- |
+| **API 26 (`GET .../teams`)** | **Baseline Avg Latency** | 12.30 ms | **4.07 ms** | **67% Latency Reduction** |
+| | **Concurrent Avg Latency** | 131.71 ms | **25.83 ms** | **80.4% Latency Drop** |
+| | **Max Concurrent Latency** | 276.21 ms | **65.04 ms** | **76.5% Max Latency Drop** |
+| | **Concurrent Throughput** | 185.5 req/sec | **922.3 req/sec** | **+397% (5x Throughput)** |
+| **API 31c (`GET .../captain-requests`)** | **Baseline Avg Latency** | 5.03 ms | **1.38 ms** | **72.6% Latency Reduction** |
+| | **Concurrent Avg Latency** | 55.25 ms | **10.37 ms** | **81.2% Latency Drop** |
+| | **Max Concurrent Latency** | 139.65 ms | **86.02 ms** | **38.4% Max Latency Drop** |
+| | **Concurrent Throughput** | 446.2 req/sec | **2,323.2 req/sec** | **+420% (5.2x Throughput)** |
 
 ---
 
@@ -1215,3 +1273,151 @@ Without a composite index on `(tournament_id, status)`, PostgreSQL executes a bi
 | **Measured Throughput** | **6,600.5 RPS** | **1,945.9 RPS** | **185.5 RPS** |
 | **Primary Latency Driver** | Raw index scan (single row) | Multi-row transactional updates (5 round-trips) | N+1 database queries (300+ round-trips) |
 | **Target After Optimization** | Optimal (Sub-millisecond) | ~3 ms (via single CTE) | ~2.5 ms (via Grouped Batch query) |
+
+---
+
+## 12. Master-Replica Read/Write Database Splitting Architecture
+
+### 12.1 Motivation & High-Load Risk Mitigation
+As tournament scale, team registrations, player catalogs, and live auction bidding traffic multiply into tens of thousands of concurrent requests, co-locating read queries and write mutations on a single primary database host creates acute performance bottlenecks:
+1. **Connection Starvation**: Intensive read operations (e.g., listing tournament teams, searching player profiles, viewing squads) hold database connections, depriving critical write operations (bidding, registering teams, claiming invites) of pooled connections.
+2. **Buffer Pool Eviction**: Large table scans and aggregations flush dirty write pages and hot indexes from the shared buffer pool.
+3. **Lock Contention**: Read locks (or long-running repeatable-read transactions) delay DDL migrations and write commit flushes.
+
+To eliminate these risks, CricAuction implements **Master-Replica Read/Write Connection Splitting**, routing **100% of read-only transactions to read replicas** while guaranteeing that **all mutations and schema migrations execute strictly on the Master write connection**.
+
+---
+
+### 12.2 Enterprise Master-Replica Architecture Design
+
+```mermaid
+flowchart TD
+    Client["Client / Mobile / Web Traffic"] --> SecurityFilter["Spring Security & JWT Filter"]
+    SecurityFilter --> Controller["Controller Layer (REST Endpoints)"]
+    Controller --> Service["Service Layer (@Transactional)"]
+    
+    subgraph RoutingEngine ["Dynamic Data Routing Engine"]
+        Service -->|"Execute Operation"| Proxy["LazyConnectionDataSourceProxy (@Primary)"]
+        Proxy -->|"Defer Connection Until 1st Statement"| Router["RoutingDataSource (AbstractRoutingDataSource)"]
+        Router -->|"inspects"| SyncManager["TransactionSynchronizationManager"]
+        
+        SyncManager -->|"isCurrentTransactionReadOnly() == true"| ReplicaRoute["Route: DataSourceType.REPLICA"]
+        SyncManager -->|"isCurrentTransactionReadOnly() == false"| MasterRoute["Route: DataSourceType.MASTER"]
+    end
+    
+    subgraph ConnectionPools ["HikariCP Dual Connection Pools"]
+        ReplicaRoute -->|"Lease Connection"| ReplicaPool["CricAuction-Replica-Pool (readOnly = true)"]
+        MasterRoute -->|"Lease Connection"| MasterPool["CricAuction-Master-Pool (readOnly = false)"]
+    end
+    
+    subgraph DatabaseServers ["PostgreSQL Database Infrastructure"]
+        ReplicaPool -->|"Read Only Queries"| ReadReplicaNode[("PostgreSQL Read Replica Node (AWS RDS / Aurora)")]
+        MasterPool -->|"Mutations & Inserts"| MasterNode[("PostgreSQL Primary / Master Write Node")]
+        MasterNode -.->|"Streaming Replication (WAL)"| ReadReplicaNode
+    end
+    
+    FlywayMigration["Flyway Migration Initializer"] -->|"@FlywayDataSource"| MasterPool
+```
+
+---
+
+### 12.3 Dynamic Routing Flow & Lazy Connection Leasing
+
+#### The Critical Need for `LazyConnectionDataSourceProxy`
+In standard Spring / JPA architectures, `JpaTransactionManager` attempts to acquire a physical JDBC connection as soon as a transactional method is entered. At that moment, the transaction advice has not fully initialized the read-only attribute on the connection.
+
+By wrapping `RoutingDataSource` with `LazyConnectionDataSourceProxy`:
+1. When a service method annotated with `@Transactional(readOnly = true)` is invoked, Spring registers `TransactionSynchronizationManager.setCurrentTransactionReadOnly(true)`.
+2. No physical database connection is leased from HikariCP yet.
+3. When the repository invokes `SELECT ...`, Hibernate triggers `prepareStatement()`.
+4. The proxy requests a connection from `RoutingDataSource.determineCurrentLookupKey()`.
+5. `determineCurrentLookupKey()` observes `isCurrentTransactionReadOnly() == true` and selects `DataSourceType.REPLICA`.
+6. A connection is leased from `CricAuction-Replica-Pool`, executing the read on the replica.
+7. If an endpoint invokes a write method (`@Transactional`), `isCurrentTransactionReadOnly()` is `false`, leasing from `CricAuction-Master-Pool`.
+
+#### Flyway Migration Safety
+Schema migrations must never execute on a read-only replica. In CricAuction:
+```java
+@Bean(name = "masterDataSource")
+@FlywayDataSource
+public DataSource masterDataSource() { ... }
+```
+The `@FlywayDataSource` annotation instructs Spring Boot to bind Flyway migrations exclusively to `masterDataSource`, completely bypassing routing and guaranteeing that migrations run on the Primary database.
+
+#### Manual Override Support
+For edge cases requiring "read-your-own-writes" immediately following a mutation (before replication sync completes):
+```java
+RoutingDataSourceContextHolder.setDataSourceType(DataSourceType.MASTER);
+try {
+    // Query guaranteed to run against Master
+    teamRepository.findById(teamId);
+} finally {
+    RoutingDataSourceContextHolder.clearDataSourceType();
+}
+```
+
+---
+
+### 12.4 Configuration & Production Deployment Parameters
+
+Master-replica connection parameters are cleanly externalized in `application.yml` and overridable via standard container environment variables:
+
+| Environment Variable | Description | Default Fallback |
+| :--- | :--- | :--- |
+| `DB_HOST` | Master PostgreSQL Host / Cluster Endpoint | `localhost` |
+| `DB_PORT` | Master PostgreSQL Port | `5432` |
+| `DB_NAME` | Master Database Name | `cricauction` |
+| `DB_USER` | Master Database Username | `yogeshkumarpadhiyar` |
+| `DB_PASSWORD` | Master Database Password | Empty |
+| `DB_REPLICA_HOST` | Read Replica PostgreSQL Host | `${DB_HOST}` |
+| `DB_REPLICA_PORT` | Read Replica PostgreSQL Port | `${DB_PORT}` |
+| `DB_REPLICA_NAME` | Read Replica Database Name | `${DB_NAME}` |
+| `DB_REPLICA_USER` | Read Replica Username | `${DB_USER}` |
+| `DB_REPLICA_PASSWORD` | Read Replica Password | `${DB_PASSWORD}` |
+
+> [!NOTE]
+> **Graceful Local Fallback**: When `DB_REPLICA_HOST` is not set (e.g. in local development, CI/CD, or single-node Docker containers), the replica pool automatically connects to the primary database while still enforcing `readOnly = true` at the Hikari/JDBC level.
+
+---
+
+### 12.5 Automated Test Verification & Live Benchmark Metrics
+
+#### 1. Unit & Dynamic Routing Verification (`DataSourceRoutingTest`)
+A dedicated integration test validates routing logic under all transaction conditions:
+- `testDataSourceBeansInitialization()`: Verifies that `masterDataSource`, `replicaDataSource`, `routingDataSource`, and `dataSource` (@Primary) are loaded.
+- `testReadOnlyTransactionRoutesToReplica()`: Asserts that `@Transactional(readOnly = true)` selects `DataSourceType.REPLICA`.
+- `testWriteTransactionRoutesToMaster()`: Asserts that `@Transactional` write selects `DataSourceType.MASTER`.
+- `testExplicitMasterOverrideInReadOnlyTransaction()`: Confirms manual thread-local override to `MASTER` takes precedence.
+- `testExplicitReplicaOverrideInWriteTransaction()`: Confirms manual thread-local override to `REPLICA`.
+- **Result**: **5 / 5 Tests Passed (100% Success Rate)**.
+
+#### 2. Live PostgreSQL Concurrency Verification (5,000 Operations Benchmark)
+The 5,000 virtual threads concurrency automation test (`./run-5000-users-team-automation.sh`) was re-run against the live PostgreSQL database (`cricauction`) with dual connection pools active:
+
+```
+================================================================================
+MODULE 5 MASTER-REPLICA CONCURRENCY BENCHMARK (5,000 CONCURRENT VIRTUAL THREADS)
+================================================================================
+Total Concurrent Operations : 5000
+Successful Operations        : 5000
+Failed Operations            : 0
+Success Rate                 : 100.00%
+Total Elapsed Time           : 6702 ms (6.70 s)
+Throughput (Throughput RPS)  : 746.05 req/sec
+Latency Metrics (Wall Clock):
+  ├── Min Latency            : 35 ms
+  ├── Average Latency        : 3873.76 ms
+  ├── Median (p50) Latency   : 4082 ms
+  ├── 90th Percentile (p90)  : 6032 ms
+  ├── 95th Percentile (p95)  : 6115 ms
+  ├── 99th Percentile (p99)  : 6493 ms
+  └── Max Latency            : 6590 ms
+================================================================================
+Database Persisted Records:
+  ├── Total Persisted Teams         : 34,038
+  └── Total Persisted Squad Members : 10,364
+================================================================================
+```
+
+#### 3. Key Takeaway & Scalability Assurance
+With read operations safely offloaded to the replica pool, the primary write pool is insulated from query spikes, reducing lock competition and preserving optimal write throughput for live auction bidding.

@@ -1,17 +1,16 @@
 package com.cricauction.modules.auth.service.impl;
 
 import com.cricauction.common.exception.BadRequestException;
-import com.cricauction.common.exception.ConflictException;
 import com.cricauction.common.exception.ResourceNotFoundException;
 import com.cricauction.common.exception.UnauthorizedException;
 import com.cricauction.modules.auth.dto.request.*;
 import com.cricauction.modules.auth.dto.response.*;
-import com.cricauction.modules.auth.entity.Role;
 import com.cricauction.modules.auth.entity.User;
 import com.cricauction.modules.auth.entity.enums.UserRole;
-import com.cricauction.modules.auth.repository.RoleRepository;
-import com.cricauction.modules.auth.repository.UserRepository;
+import com.cricauction.modules.auth.service.AuthPersistenceService;
+import com.cricauction.modules.auth.service.AuthQueryService;
 import com.cricauction.modules.auth.service.AuthService;
+import com.cricauction.modules.auth.service.GoogleAuthService;
 import com.cricauction.modules.auth.service.OtpService;
 import com.cricauction.modules.auth.service.TokenService;
 import com.cricauction.security.JwtTokenProvider;
@@ -20,25 +19,28 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 
+/**
+ * Orchestrator Service for Authentication implementing Strategy 1 (Read-Before-Write).
+ * - Preparatory checks and user identity lookups route to Read Replica (AuthQueryService).
+ * - Cryptographic operations (BCrypt hashing) and external verification run without holding DB connections.
+ * - State mutations route to Master DB via fast micro-transactions (AuthPersistenceService).
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class AuthServiceImpl implements AuthService {
 
-    private final UserRepository userRepository;
-    private final RoleRepository roleRepository;
+    private final AuthQueryService authQueryService;
+    private final AuthPersistenceService authPersistenceService;
     private final PasswordEncoder passwordEncoder;
     private final OtpService otpService;
     private final TokenService tokenService;
     private final JwtTokenProvider jwtTokenProvider;
-    private final com.cricauction.modules.auth.service.GoogleAuthService googleAuthService;
+    private final GoogleAuthService googleAuthService;
 
     @Override
     public SignUpResponse signUp(SignUpRequest request) {
@@ -49,44 +51,21 @@ public class AuthServiceImpl implements AuthService {
         String email = request.getEmail().trim().toLowerCase();
         String mobile = request.getMobile().trim();
 
-        // 1. Single consolidated duplicate pre-check
-        List<Object[]> existing = userRepository.findExistingIdentifiers(email, mobile);
-        if (!existing.isEmpty()) {
-            for (Object[] row : existing) {
-                if (email.equalsIgnoreCase((String) row[0])) {
-                    throw new ConflictException("EMAIL_ALREADY_EXISTS", "An account with this email address already exists.");
-                }
-                if (mobile.equalsIgnoreCase((String) row[1])) {
-                    throw new ConflictException("MOBILE_ALREADY_EXISTS", "An account with this mobile number already exists.");
-                }
-            }
-        }
+        // 1. Duplicate pre-check on Read Replica (Zero Master connection)
+        authQueryService.validateNewUserIdentifiers(email, mobile);
 
         // 2. Compute BCrypt hash OUTSIDE database transaction (Zero connection holding during crypto)
         String encodedPassword = passwordEncoder.encode(request.getPassword());
 
-        // 3. Persist user and trigger OTP
-        return persistNewUserAndSendOtp(request, email, mobile, encodedPassword);
-    }
+        // 3. Fast micro-write on Master DB (~1 ms connection hold)
+        User savedUser = authPersistenceService.createLocalUser(
+                request.getFullName().trim(),
+                email,
+                mobile,
+                encodedPassword
+        );
 
-    @Transactional
-    public SignUpResponse persistNewUserAndSendOtp(SignUpRequest request, String email, String mobile, String encodedPassword) {
-        User user = User.builder()
-                .fullName(request.getFullName().trim())
-                .email(email)
-                .mobile(mobile)
-                .passwordHash(encodedPassword)
-                .isMobileVerified(false)
-                .isActive(true)
-                .build();
-
-        Role roleEntity = roleRepository.findByName(UserRole.PLAYER)
-                .orElseGet(() -> roleRepository.save(Role.builder().name(UserRole.PLAYER).build()));
-        user.addRole(roleEntity);
-
-        User savedUser = userRepository.save(user);
-
-        // Send OTP verification to mobile
+        // 4. Send OTP verification to mobile
         otpService.sendOtp(savedUser.getMobile(), "signup_verification");
 
         return SignUpResponse.builder()
@@ -101,10 +80,11 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public AuthResponse signIn(SignInRequest request) {
         String identifier = request.getIdentifier().trim();
-        User user = userRepository.findByIdentifier(identifier)
-                .orElseThrow(() -> new UnauthorizedException("INVALID_CREDENTIALS", "Invalid email/mobile or password."));
 
-        // Match password with ZERO database connection held
+        // 1. Fetch user from Read Replica
+        User user = authQueryService.findByIdentifierForSignIn(identifier);
+
+        // 2. Match password with ZERO database connection held
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
             throw new UnauthorizedException("INVALID_CREDENTIALS", "Invalid email/mobile or password.");
         }
@@ -134,7 +114,6 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    @Transactional
     public VerifyOtpResponse verifyOtp(VerifyOtpRequest request) {
         String target = request.getTargetIdentifier();
         if (target == null || target.isBlank()) {
@@ -145,25 +124,17 @@ public class AuthServiceImpl implements AuthService {
         // 1. Verify OTP code
         otpService.verifyOtp(target, request.getOtp(), purpose);
 
-        // 2. Fetch associated user
-        Optional<User> userOpt = userRepository.findByIdentifier(target);
+        // 2. Fetch associated user from Read Replica
+        Optional<User> userOpt = authQueryService.findByIdentifierOptional(target);
 
         if ("login".equalsIgnoreCase(purpose)) {
-            User user = userOpt.orElseGet(() -> {
-                boolean isEmail = target.contains("@");
-                User newUser = User.builder()
-                        .fullName(isEmail ? target.substring(0, target.indexOf("@")) : "User " + target.substring(Math.max(0, target.length() - 4)))
-                        .email(isEmail ? target : null)
-                        .mobile(isEmail ? null : target)
-                        .isEmailVerified(isEmail)
-                        .isMobileVerified(!isEmail)
-                        .isActive(true)
-                        .build();
-                Role roleEntity = roleRepository.findByName(UserRole.PLAYER)
-                        .orElseGet(() -> roleRepository.save(Role.builder().name(UserRole.PLAYER).build()));
-                newUser.addRole(roleEntity);
-                return userRepository.save(newUser);
-            });
+            User user = userOpt.orElseGet(() ->
+                    authPersistenceService.createOtpUser(target, UserRole.PLAYER, null)
+            );
+
+            if (!user.isActive()) {
+                throw new UnauthorizedException("ACCOUNT_SUSPENDED", "Your account has been deactivated. Please contact support.");
+            }
 
             String accessToken = jwtTokenProvider.generateAccessToken(user);
             return VerifyOtpResponse.builder()
@@ -174,6 +145,10 @@ public class AuthServiceImpl implements AuthService {
 
         User user = userOpt.orElseThrow(() -> new ResourceNotFoundException("USER_NOT_FOUND", "No user found with identifier " + target));
 
+        if (!user.isActive()) {
+            throw new UnauthorizedException("ACCOUNT_SUSPENDED", "Your account has been deactivated. Please contact support.");
+        }
+
         if ("password_reset".equalsIgnoreCase(purpose)) {
             String resetToken = tokenService.createPasswordResetToken(user);
             return VerifyOtpResponse.builder()
@@ -181,15 +156,10 @@ public class AuthServiceImpl implements AuthService {
                     .resetToken(resetToken)
                     .build();
         } else {
-            // "signup_verification" or general verification
-            if (target.contains("@")) {
-                user.setEmailVerified(true);
-            } else {
-                user.setMobileVerified(true);
-            }
-            userRepository.save(user);
+            // "signup_verification" or general verification -> micro-write on Master DB
+            User updated = authPersistenceService.markUserVerified(user.getId(), target.contains("@"));
 
-            String accessToken = jwtTokenProvider.generateAccessToken(user);
+            String accessToken = jwtTokenProvider.generateAccessToken(updated);
             return VerifyOtpResponse.builder()
                     .isVerified(true)
                     .accessToken(accessToken)
@@ -198,25 +168,23 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    @Transactional
     public AuthResponse loginWithOtp(OtpLoginRequest request) {
         String target = request.getIdentifier().trim().toLowerCase();
+
+        // 1. Verify OTP
         otpService.verifyOtp(target, request.getOtp(), "login");
 
-        Optional<User> userOpt = userRepository.findByIdentifier(target);
+        // 2. Lookup user from Read Replica
+        Optional<User> userOpt = authQueryService.findByIdentifierOptional(target);
         User user;
+
         if (userOpt.isPresent()) {
-            user = userOpt.get();
-            if (!user.isActive()) {
+            User existing = userOpt.get();
+            if (!existing.isActive()) {
                 throw new UnauthorizedException("ACCOUNT_SUSPENDED", "Your account has been deactivated. Please contact support.");
             }
-            if (target.contains("@") && !user.isEmailVerified()) {
-                user.setEmailVerified(true);
-                user = userRepository.save(user);
-            } else if (!target.contains("@") && !user.isMobileVerified()) {
-                user.setMobileVerified(true);
-                user = userRepository.save(user);
-            }
+            // Fast micro-write on Master DB for verification flag updates
+            user = authPersistenceService.loginExistingOtpUser(existing.getId(), target.contains("@"));
         } else {
             UserRole role = UserRole.PLAYER;
             if (request.getRole() != null && !request.getRole().isBlank()) {
@@ -224,23 +192,8 @@ public class AuthServiceImpl implements AuthService {
                     role = UserRole.fromString(request.getRole());
                 } catch (Exception ignored) {}
             }
-
-            final UserRole assignedRole = role;
-            boolean isEmail = target.contains("@");
-            user = User.builder()
-                    .fullName(isEmail ? target.substring(0, target.indexOf("@")) : "User " + target.substring(Math.max(0, target.length() - 4)))
-                    .email(isEmail ? target : null)
-                    .mobile(isEmail ? null : target)
-                    .city(request.getCity())
-                    .authProvider(com.cricauction.modules.auth.entity.enums.AuthProvider.LOCAL)
-                    .isEmailVerified(isEmail)
-                    .isMobileVerified(!isEmail)
-                    .isActive(true)
-                    .build();
-            Role roleEntity = roleRepository.findByName(assignedRole)
-                    .orElseGet(() -> roleRepository.save(Role.builder().name(assignedRole).build()));
-            user.addRole(roleEntity);
-            user = userRepository.save(user);
+            // Fast micro-write on Master DB for new user creation
+            user = authPersistenceService.createOtpUser(target, role, request.getCity());
         }
 
         String accessToken = jwtTokenProvider.generateAccessToken(user);
@@ -257,28 +210,53 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public ForgotPasswordResponse forgotPassword(ForgotPasswordRequest request) {
         String identifier = request.getIdentifier().trim();
-        User user = userRepository.findByIdentifier(identifier)
-                .orElseThrow(() -> new ResourceNotFoundException("USER_NOT_FOUND", "No registered account found with " + identifier));
 
-        // Dispatch OTP for password reset
-        otpService.sendOtp(user.getMobile(), "password_reset");
+        // 1. Fetch user from Read Replica
+        User user = authQueryService.findByIdentifierForPasswordReset(identifier);
+
+        if (!user.isActive()) {
+            throw new UnauthorizedException("ACCOUNT_SUSPENDED", "Your account has been deactivated. Please contact support.");
+        }
+
+        String targetContact;
+        String deliveryMethod;
+        String maskedContact;
+
+        if (user.getMobile() != null && !user.getMobile().isBlank()) {
+            targetContact = user.getMobile();
+            deliveryMethod = "SMS";
+            maskedContact = maskMobile(targetContact);
+        } else if (user.getEmail() != null && !user.getEmail().isBlank()) {
+            targetContact = user.getEmail();
+            deliveryMethod = "EMAIL";
+            maskedContact = maskEmail(targetContact);
+        } else {
+            throw new BadRequestException("INVALID_IDENTIFIER", "User has neither a valid mobile nor email registered.");
+        }
+
+        // 2. Dispatch OTP for password reset
+        otpService.sendOtp(targetContact, "password_reset");
 
         return ForgotPasswordResponse.builder()
-                .maskedContact(maskMobile(user.getMobile()))
-                .deliveryMethod("SMS")
+                .maskedContact(maskedContact)
+                .deliveryMethod(deliveryMethod)
                 .build();
     }
 
     @Override
-    @Transactional
     public void resetPassword(ResetPasswordRequest request) {
         if (!request.getNewPassword().equals(request.getConfirmPassword())) {
             throw new BadRequestException("PASSWORDS_DO_NOT_MATCH", "New password and confirm password do not match.");
         }
 
+        // 1. Validate and consume token on Master
         User user = tokenService.validateAndConsumePasswordResetToken(request.getResetToken());
-        user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
-        userRepository.save(user);
+
+        // 2. Hash password OUTSIDE DB transaction (Zero connection held)
+        String newPasswordHash = passwordEncoder.encode(request.getNewPassword());
+
+        // 3. Fast micro-write on Master DB
+        authPersistenceService.updatePassword(user.getId(), newPasswordHash);
 
         log.info("Password reset successfully for user ID [{}]", user.getId());
     }
@@ -297,47 +275,16 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    @Transactional(readOnly = true)
     public UserProfileResponse getCurrentUser(UserPrincipal currentUser) {
-        User user = userRepository.findById(currentUser.getId())
-                .orElseThrow(() -> new ResourceNotFoundException("USER_NOT_FOUND", "User profile not found."));
-
-        return UserProfileResponse.fromEntity(user);
+        return authQueryService.getUserProfile(currentUser.getId());
     }
 
     @Override
-    @Transactional
     public RoleResponse switchRole(UserPrincipal currentUser, RoleSelectionRequest request) {
-        User user = userRepository.findById(currentUser.getId())
-                .orElseThrow(() -> new ResourceNotFoundException("USER_NOT_FOUND", "User not found."));
+        // Fast micro-write on Master DB
+        User updated = authPersistenceService.updateUserRoles(currentUser.getId(), request);
 
-        if (request.getRoles() != null && !request.getRoles().isEmpty()) {
-            Set<Role> newRoles = new HashSet<>();
-            for (String rStr : request.getRoles()) {
-                UserRole ur = UserRole.fromString(rStr);
-                if (ur != null) {
-                    final UserRole targetRole = ur;
-                    Role roleEntity = roleRepository.findByName(targetRole)
-                            .orElseGet(() -> roleRepository.save(Role.builder().name(targetRole).build()));
-                    newRoles.add(roleEntity);
-                }
-            }
-            if (newRoles.isEmpty()) {
-                throw new BadRequestException("INVALID_ROLE", "No valid roles provided.");
-            }
-            user.setRoles(newRoles);
-        } else if (request.getRole() != null && !request.getRole().isBlank()) {
-            final UserRole newRole = UserRole.fromString(request.getRole());
-            Role roleEntity = roleRepository.findByName(newRole)
-                    .orElseGet(() -> roleRepository.save(Role.builder().name(newRole).build()));
-            user.addRole(roleEntity);
-        } else {
-            throw new BadRequestException("INVALID_ROLE_REQUEST", "Either 'roles' list or 'role' string must be provided.");
-        }
-
-        userRepository.save(user);
-
-        List<String> roleNames = user.getRoleNames();
+        List<String> roleNames = updated.getRoleNames();
         return RoleResponse.builder()
                 .roles(roleNames)
                 .build();
@@ -355,5 +302,18 @@ public class AuthServiceImpl implements AuthService {
         int len = mobile.length();
         String prefix = mobile.substring(0, Math.min(len - 5, 8));
         return prefix + " *****";
+    }
+
+    private String maskEmail(String email) {
+        if (email == null || !email.contains("@")) {
+            return "****";
+        }
+        int atIndex = email.indexOf("@");
+        String name = email.substring(0, atIndex);
+        String domain = email.substring(atIndex);
+        if (name.length() <= 2) {
+            return name.charAt(0) + "***" + domain;
+        }
+        return name.substring(0, 2) + "***" + domain;
     }
 }

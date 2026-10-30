@@ -451,6 +451,80 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.data.user.roles", hasItem("organizer")));
     }
 
+    @Test
+    @DisplayName("Security: POST /api/v1/auth/otp/verify - Deactivated user OTP login rejected with 401 (SEC-AUTH-DEACTIVATED-USER-LOGIN-BYPASS)")
+    void verifyOtp_DeactivatedUser_Rejected() throws Exception {
+        User user = createTestUser("Suspended User", "suspended@example.com", "+919876543999", "Pass123456!", UserRole.PLAYER);
+        user.setActive(false);
+        userRepository.save(user);
+
+        otpRepository.save(OtpVerification.builder()
+                .identifier("+919876543999")
+                .mobile("+919876543999")
+                .purpose("login")
+                .otpCode("123456")
+                .attempts(0)
+                .expiresAt(Instant.now().plusSeconds(300))
+                .build());
+
+        VerifyOtpRequest request = VerifyOtpRequest.builder()
+                .mobile("+919876543999")
+                .otp("123456")
+                .purpose("login")
+                .build();
+
+        mockMvc.perform(post("/api/v1/auth/otp/verify")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.success", is(false)))
+                .andExpect(jsonPath("$.error.code", is("ACCOUNT_SUSPENDED")));
+    }
+
+    @Test
+    @DisplayName("Security: Active JWT rejected after user deactivation (SEC-AUTH-DEACTIVATED-USER-ACTIVE-JWT-RETENTION)")
+    void jwtAuth_DeactivatedUser_Rejected() throws Exception {
+        User user = createTestUser("Deactivated Player", "deact@example.com", "+919876543888", "Pass123456!", UserRole.PLAYER);
+        String token = jwtTokenProvider.generateAccessToken(user);
+
+        // Deactivate account
+        user.setActive(false);
+        userRepository.save(user);
+
+        // Attempt to call authenticated endpoint with previously issued JWT
+        mockMvc.perform(get("/api/v1/auth/me")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("Security: POST /api/v1/auth/password/forgot - User with null mobile successfully resets via email (SEC-AUTH-PASSWORD-RESET-NULL-MOBILE-DOS)")
+    void forgotPassword_NullMobile_SuccessViaEmail() throws Exception {
+        // User created with null mobile (e.g., Google or Email-only signup)
+        User user = User.builder()
+                .fullName("Email Only User")
+                .email("emailonly@example.com")
+                .mobile(null)
+                .passwordHash(passwordEncoder.encode("Pass123456!"))
+                .isEmailVerified(true)
+                .isActive(true)
+                .build();
+        roleRepository.findByName(UserRole.PLAYER).ifPresent(user::addRole);
+        userRepository.save(user);
+
+        ForgotPasswordRequest request = ForgotPasswordRequest.builder()
+                .identifier("emailonly@example.com")
+                .build();
+
+        mockMvc.perform(post("/api/v1/auth/password/forgot")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success", is(true)))
+                .andExpect(jsonPath("$.data.deliveryMethod", is("EMAIL")))
+                .andExpect(jsonPath("$.data.maskedContact", notNullValue()));
+    }
+
     private User createTestUser(String fullName, String email, String mobile, String rawPassword, UserRole role) {
         User user = User.builder()
                 .fullName(fullName)

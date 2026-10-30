@@ -78,7 +78,13 @@ public class LocalFileStorageStrategy implements FileStorageStrategy {
         String safeFileName = UUID.randomUUID().toString().replace("-", "") + extension;
 
         try {
-            Path targetDir = Paths.get(baseDir, subDirectory).toAbsolutePath().normalize();
+            Path baseRoot = Paths.get(baseDir).toAbsolutePath().normalize();
+            String sub = (subDirectory != null) ? subDirectory.trim() : "";
+            Path targetDir = baseRoot.resolve(sub.startsWith("/") ? sub.substring(1) : sub).normalize();
+            if (!targetDir.startsWith(baseRoot)) {
+                log.warn("Path traversal attempted in uploadFile: [{}]", subDirectory);
+                throw new BadRequestException("INVALID_PATH", "Upload path must stay within the base directory.");
+            }
             Files.createDirectories(targetDir);
 
             Path targetPath = targetDir.resolve(safeFileName);
@@ -87,7 +93,9 @@ public class LocalFileStorageStrategy implements FileStorageStrategy {
             }
 
             log.info("Uploaded file stored locally at: {}", targetPath);
-            return baseUrl + "/" + subDirectory + "/" + safeFileName;
+            return baseUrl + "/" + (sub.startsWith("/") ? sub.substring(1) : sub) + "/" + safeFileName;
+        } catch (BadRequestException e) {
+            throw e;
         } catch (IOException e) {
             log.error("Failed to store uploaded file: {}", e.getMessage(), e);
             throw new BadRequestException("UPLOAD_FAILED", "Could not store file: " + e.getMessage());

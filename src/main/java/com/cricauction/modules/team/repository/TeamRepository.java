@@ -18,7 +18,16 @@ public interface TeamRepository extends JpaRepository<Team, Long> {
 
     Optional<Team> findByInviteCode(String inviteCode);
 
+    @Query("SELECT t FROM Team t JOIN FETCH t.tournament WHERE t.inviteCode = :inviteCode")
+    Optional<Team> findByInviteCodeWithTournament(@Param("inviteCode") String inviteCode);
+
     Optional<Team> findByIdAndTournamentId(Long id, Long tournamentId);
+
+    @Query("SELECT t FROM Team t JOIN FETCH t.tournament WHERE t.id = :id AND t.tournament.id = :tournamentId")
+    Optional<Team> findByIdAndTournamentIdWithTournament(@Param("id") Long id, @Param("tournamentId") Long tournamentId);
+
+    @Query("SELECT t FROM Team t JOIN FETCH t.tournament WHERE t.id = :id")
+    Optional<Team> findByIdWithTournament(@Param("id") Long id);
 
     boolean existsByInviteCode(String inviteCode);
 

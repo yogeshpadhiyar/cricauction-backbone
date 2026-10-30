@@ -3,11 +3,14 @@ package com.cricauction.common.exception;
 import com.cricauction.common.api.ApiError;
 import com.cricauction.common.api.ApiResponse;
 import com.cricauction.common.api.ErrorDetail;
+import jakarta.persistence.OptimisticLockException;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.validation.FieldError;
@@ -88,6 +91,22 @@ public class GlobalExceptionHandler {
         log.warn("Access denied: {}", ex.getMessage());
         ApiError error = ApiError.of("FORBIDDEN", "You do not have permission to access this resource");
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.error(error));
+    }
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ApiResponse<Void>> handleDataIntegrityViolation(DataIntegrityViolationException ex) {
+        log.warn("Database constraint or unique key violation: {}", ex.getMessage());
+        ApiError error = ApiError.of("RESOURCE_CONFLICT",
+                "A resource with these details already exists or a uniqueness constraint was violated.");
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.error(error));
+    }
+
+    @ExceptionHandler({ObjectOptimisticLockingFailureException.class, OptimisticLockException.class})
+    public ResponseEntity<ApiResponse<Void>> handleOptimisticLockFailure(Exception ex) {
+        log.warn("Optimistic concurrency conflict detected: {}", ex.getMessage());
+        ApiError error = ApiError.of("CONCURRENT_MODIFICATION",
+                "The resource was modified concurrently by another transaction. Please refresh and try again.");
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.error(error));
     }
 
     @ExceptionHandler(Exception.class)

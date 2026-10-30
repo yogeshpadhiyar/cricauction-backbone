@@ -253,6 +253,7 @@ public class RealTimeUserJourneyTest {
 
         // 61st request should be rejected by rate limiter
         mockMvc.perform(post("/api/v1/auth/signin")
+                        .with(request -> { request.setRemoteAddr(testIp); return request; })
                         .header("X-Forwarded-For", testIp)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))

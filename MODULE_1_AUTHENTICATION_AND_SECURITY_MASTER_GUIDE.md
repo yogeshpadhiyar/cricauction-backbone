@@ -1,7 +1,7 @@
 # CricAuction Module 1: Authentication, Authorization & Security
 ## Comprehensive Technical Architecture & Developer Reference Manual
 
-> **Document Status**: Production Complete | Tested against PostgreSQL 16+ | 5,000 Concurrent Users Benchmark Verified (4.72s Latency)  
+> **Document Status**: Production Complete | Tested against PostgreSQL 16+ | 83/83 Automated Tests Passing (0 Failures, 0 Errors, 0 Skipped) | 5,000 Concurrent Users Benchmark Verified (4.72s Latency)  
 > **Audience**: Backend Engineers, DevOps, System Architects, Security Auditors  
 > **Maintainer**: CricAuction Engineering Team  
 
@@ -68,36 +68,48 @@ src/main/java/com/cricauction/
 │   │   ├── ResourceNotFoundException.java       # HTTP 404
 │   │   ├── ConflictException.java               # HTTP 409
 │   │   └── GlobalExceptionHandler.java          # @RestControllerAdvice uniform error mapper
+│   ├── cache/                                   # High-performance cache implementations
+│   │   └── BoundedLruCache.java                 # Eviction-bounded memory cache (max 500, 10 min TTL)
 │   └── resilience/                              # Fault tolerance & traffic regulation
 │       ├── RateLimiter.java                     # Sliding window token bucket
 │       ├── RateLimitingFilter.java              # Servlet filter enforcing rate limits
-│       ├── CircuitBreaker.java                  # 3-state downstream circuit breaker
-│       └── ResilienceRetry.java                 # Exponential backoff with jitter
+│       ├── CircuitBreaker.java                  # Multi-service isolated circuit breaker
+│       └── ResilienceRetry.java                 # Exponential backoff bypassing non-transient 4xx
 ├── config/                                      # Spring framework configurations
 │   ├── ApplicationConfig.java                   # PasswordEncoder, ObjectMapper, AuthProvider
 │   ├── SecurityConfig.java                      # Spring Security 7 filter chain & CORS
 │   ├── JwtConfig.java                           # JWT secret & expiration properties
-│   └── OpenApiConfig.java                       # Swagger UI / OpenAPI 3.0 configuration
+│   ├── OpenApiConfig.java                       # Swagger UI / OpenAPI 3.0 configuration
+│   └── datasource/                              # Master-Replica dynamic routing
+│       ├── DataSourceConfig.java                # HikariCP Master & Replica configuration
+│       ├── DynamicDataSourceRouter.java         # Transaction-aware routing DataSource
+│       └── DataSourceType.java                  # MASTER vs REPLICA
 ├── security/                                    # Security primitives & JWT engine
 │   ├── UserPrincipal.java                       # Spring Security UserDetails adapter
 │   ├── CustomUserDetailsService.java            # User loader (email, mobile, ID)
 │   ├── JwtTokenProvider.java                    # HMAC-SHA256 JWT minting & parsing
-│   └── JwtAuthenticationFilter.java             # OncePerRequestFilter for Bearer tokens
+│   └── JwtAuthenticationFilter.java             # OncePerRequestFilter with active status validation
 └── modules/
     └── auth/                                    # Module 1 Domain Boundary
         ├── controller/
         │   └── AuthController.java              # 10 REST endpoints
+        ├── scheduler/                           # Automated background housekeeping
+        │   └── AuthTokenCleanupScheduler.java   # Scheduled hourly purge of expired OTPs & tokens
         ├── service/
         │   ├── AuthService.java                 # Core business workflow contract
+        │   ├── AuthQueryService.java            # CQRS Read phase (Read Replica routing)
+        │   ├── AuthPersistenceService.java      # CQRS Micro-write phase (Master DB routing)
         │   ├── GoogleAuthService.java           # Google OAuth workflow contract
         │   ├── GoogleTokenVerifier.java         # ID token verification contract
         │   ├── OtpService.java                  # OTP generation & validation contract
-        │   ├── TokenService.java                # Refresh & Reset token contract
+        │   ├── OtpQueryService.java             # OTP reads on Replica
+        │   ├── OtpPersistenceService.java       # OTP micro-writes on Master
+        │   ├── TokenService.java                # Refresh & Reset token contract (Master routing)
         │   └── impl/
         │       ├── AuthServiceImpl.java         # Decoupled crypto & transaction coordinator
         │       ├── GoogleAuthServiceImpl.java   # Google account linking & provisioning
         │       ├── GoogleTokenVerifierImpl.java # Google public certs & tokeninfo verification
-        │       ├── OtpServiceImpl.java          # Lock-free ThreadLocalRandom OTP engine
+        │       ├── OtpServiceImpl.java          # Cryptographically secure OTP engine
         │       └── TokenServiceImpl.java        # Refresh token rotation & reset lifecycle
         ├── strategy/                            # Strategy Pattern for OTP delivery
         │   ├── OtpDeliveryStrategy.java         # Strategy interface
@@ -391,6 +403,28 @@ public SignUpResponse signUp(SignUpRequest request) {
 
 ---
 
+### 4.4 Immediate Deactivated User Session Revocation & Login Defense
+- **Filter-Level Revocation**: In [`JwtAuthenticationFilter.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/security/JwtAuthenticationFilter.java), every authenticated request verifies `userDetails.isEnabled() && userDetails.isAccountNonLocked()`. If an administrator deactivates an account (`user.isActive = false`), all active JWT tokens are immediately rejected with `HTTP 401 Unauthorized` without waiting for the 24-hour token expiration.
+- **OTP Login Defense**: Both `verifyOtp` and `loginWithOtp` in [`AuthServiceImpl.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auth/service/impl/AuthServiceImpl.java) validate `user.isActive()`, rejecting suspended users with `HTTP 401 Unauthorized` (`ACCOUNT_SUSPENDED`).
+
+---
+
+### 4.5 Dual-Channel Password Recovery (SMS + Email Fallback with Masking)
+- In [`AuthServiceImpl.forgotPassword`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auth/service/impl/AuthServiceImpl.java), account recovery supports both mobile numbers and email identifiers:
+  - If `user.getMobile()` is present, OTP is dispatched via `SmsOtpDeliveryStrategy` with `deliveryMethod: "SMS"` and phone number masked (`+9198765 *****`).
+  - If `user.getMobile()` is null or blank (common for accounts registered via Google OAuth or Email OTP), the system seamlessly falls back to `user.getEmail()`, dispatching OTP via `EmailOtpDeliveryStrategy` with `deliveryMethod: "EMAIL"` and email masked (`vi***@example.com`).
+  - Guarantees zero unhandled exceptions for email-only users.
+
+---
+
+### 4.6 Master DB Routing for Token Refresh & Automated Housekeeping Scheduler
+- **Zero Replication Lag on Refresh**: [`TokenServiceImpl.refreshToken`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auth/service/impl/TokenServiceImpl.java) executes directly on the Master DB (`@Transactional(readOnly = false)`) ensuring recently rotated refresh tokens are immediately visible without read-replica replication lag 401 failures.
+- **Automated Expired Data Purging**: [`AuthTokenCleanupScheduler.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auth/scheduler/AuthTokenCleanupScheduler.java) runs an automated `@Scheduled(cron = "0 0 * * * *")` hourly task:
+  - Deletes expired OTP records (`deleteByExpiresAtBefore(now)`).
+  - Deletes expired or revoked refresh tokens (`deleteExpiredOrRevokedBefore(now)`).
+
+---
+
 ## 5. Resilience & High-Concurrency Architecture
 
 ```mermaid
@@ -401,9 +435,9 @@ flowchart TD
 
     subgraph Service Layer Fault Tolerance
         VT --> ExtCall{External Service Call\nGoogle OAuth / SMS Gateway}
-        ExtCall --> CB{CircuitBreaker State}
+        ExtCall --> CB{CircuitBreaker State\nIsolated Per Service}
         CB -->|OPEN| Fallback[Execute Fallback / Cached Token]
-        CB -->|CLOSED / HALF-OPEN| Retry[ResilienceRetry Engine\nExponential Backoff + Jitter]
+        CB -->|CLOSED / HALF-OPEN| Retry[ResilienceRetry Engine\nExponential Backoff + Jitter\nNon-Transient 4xx Bypassed]
         Retry --> Downstream[Downstream External Service]
     end
 ```
@@ -419,15 +453,18 @@ flowchart TD
   - `X-Rate-Limit-Remaining: 0`
   - Error JSON envelope: `{"code": "RATE_LIMIT_EXCEEDED", "message": "Too many requests..."}`
 
-### 5.2 3-State Resilient Circuit Breaker
+### 5.2 Multi-Service Isolated 3-State Circuit Breaker
 - **Component**: [**`CircuitBreaker.java`**](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/common/resilience/CircuitBreaker.java)
+- **Per-Service Isolation**: Maintains independent `CircuitState` instances per downstream service name (`ConcurrentHashMap<String, CircuitState>`), preventing SMS gateway outages from affecting Google OAuth authentication.
+- **Client Error Bypass**: Automatically bypasses HTTP 4xx client errors (such as invalid user inputs or expired client tokens) without counting them toward circuit breaker trips.
 - **State Transitions**:
-  - `CLOSED`: Normal operation. Each downstream failure increments consecutive failure count.
-  - `OPEN`: Tripped after 5 consecutive downstream failures. Requests immediately execute fallback without hitting downstream.
+  - `CLOSED`: Normal operation. Consecutive server failures increment failure count.
+  - `OPEN`: Tripped after 5 consecutive downstream server failures. Requests immediately execute fallback without hitting downstream.
   - `HALF_OPEN`: Automatically transitions after a 5,000ms cooldown to evaluate downstream health. If the trial call succeeds, state resets to `CLOSED`.
 
-### 5.3 Exponential Backoff with Randomized Jitter
+### 5.3 Exponential Backoff with Randomized Jitter & Non-Transient Bypass
 - **Component**: [**`ResilienceRetry.java`**](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/common/resilience/ResilienceRetry.java)
+- **Non-Transient Bypass**: Non-transient errors (such as 4xx client errors, invalid credentials, bad requests) bypass retry loops immediately, preventing unnecessary backoff delays.
 - **Algorithm**:
   $$\text{Backoff} = (\text{initialBackoff} \times 2^{\text{attempt}}) + \text{ThreadLocalRandom}(10\text{ms}, 50\text{ms})$$
 - Protects external Google OAuth calls and SMS/Email OTP dispatches from transient socket resets and thundering herd conditions.

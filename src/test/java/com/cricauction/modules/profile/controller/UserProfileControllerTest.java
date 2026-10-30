@@ -263,4 +263,18 @@ public class UserProfileControllerTest {
             localFileStorageStrategy.deleteFile("https://cdn.cricauction.app/../../../../etc/passwd");
         });
     }
+
+    @Test
+    @DisplayName("Security: LocalFileStorageStrategy blocks path traversal in uploadFile (SEC-STORAGE-UPLOAD-UNCONFINED-ROOT)")
+    void testUploadFile_BlocksPathTraversal() {
+        org.springframework.mock.web.MockMultipartFile file = new org.springframework.mock.web.MockMultipartFile(
+                "file", "avatar.jpg", "image/jpeg", "dummy image content".getBytes()
+        );
+        com.cricauction.common.exception.BadRequestException ex =
+                org.junit.jupiter.api.Assertions.assertThrows(
+                        com.cricauction.common.exception.BadRequestException.class,
+                        () -> localFileStorageStrategy.uploadFile(file, "../../../etc")
+                );
+        org.junit.jupiter.api.Assertions.assertEquals("INVALID_PATH", ex.getErrorCode());
+    }
 }

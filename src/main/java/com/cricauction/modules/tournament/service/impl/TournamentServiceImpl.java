@@ -1,8 +1,8 @@
 package com.cricauction.modules.tournament.service.impl;
 
+import com.cricauction.common.cache.BoundedLruCache;
 import com.cricauction.common.exception.BadRequestException;
 import com.cricauction.common.exception.ForbiddenException;
-import com.cricauction.common.exception.ResourceNotFoundException;
 import com.cricauction.modules.tournament.dto.request.CreateTournamentRequest;
 import com.cricauction.modules.tournament.dto.request.TournamentSettingsRequest;
 import com.cricauction.modules.tournament.dto.request.UpdateTournamentRequest;
@@ -10,39 +10,46 @@ import com.cricauction.modules.tournament.dto.response.*;
 import com.cricauction.modules.tournament.entity.Tournament;
 import com.cricauction.modules.tournament.entity.TournamentSettings;
 import com.cricauction.modules.tournament.entity.enums.TournamentStatus;
-import com.cricauction.modules.tournament.repository.TournamentRepository;
-import com.cricauction.modules.tournament.repository.TournamentSettingsRepository;
+import com.cricauction.modules.tournament.service.TournamentPersistenceService;
+import com.cricauction.modules.tournament.service.TournamentQueryService;
 import com.cricauction.modules.tournament.service.TournamentService;
 import com.cricauction.security.UserPrincipal;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-import java.text.Normalizer;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Enterprise Tournament Service Orchestrator implementing Strategy 1: "Read-Before-Write".
+ *
+ * <p>Flow Segregation:
+ * 1. <b>Read Phase:</b> Handled by {@link TournamentQueryService} under {@code @Transactional(readOnly = true)}
+ *    on the Read Replica pool (CricAuction-Replica-Pool). All validations, slug uniqueness, and ownership checks
+ *    execute without holding a Master database connection.
+ * 2. <b>Micro-Write Phase:</b> Handled by {@link TournamentPersistenceService} under {@code @Transactional}
+ *    on the Master pool (CricAuction-Master-Pool) for the absolute minimum duration (sub-millisecond mutations).
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class TournamentServiceImpl implements TournamentService {
 
-    private final TournamentRepository tournamentRepository;
-    private final TournamentSettingsRepository settingsRepository;
+    private final TournamentQueryService tournamentQueryService;
+    private final TournamentPersistenceService tournamentPersistenceService;
 
     /**
-     * High-speed L1 In-Memory Cache for Public Landing Pages (API 25)
-     * Handles 5,000+ concurrent reads with sub-millisecond response latency.
+     * High-speed Bounded L1 In-Memory Cache for Public Landing Pages (API 25)
+     * Max 500 items, 10-minute TTL to prevent JVM memory leaks under crawler or high load.
      */
-    private final Map<String, PublicTournamentResponse> publicTournamentCache = new ConcurrentHashMap<>();
+    private final BoundedLruCache<String, PublicTournamentResponse> publicTournamentCache =
+            new BoundedLruCache<>(500, 600);
 
     @Override
-    @Transactional
     public CreateTournamentResponse createTournament(UserPrincipal currentUser, CreateTournamentRequest request) {
         validateOrganizerRole(currentUser);
 
@@ -55,7 +62,8 @@ public class TournamentServiceImpl implements TournamentService {
             }
         }
 
-        String slug = generateUniqueSlug(request.getName());
+        // 1. Read Phase on READ REPLICA: Check and generate unique slug
+        String slug = tournamentQueryService.generateUniqueSlug(request.getName());
         String publicId = "tourn_" + slug.replace("-", "_");
         if (publicId.length() > 45) {
             publicId = publicId.substring(0, 40) + "_" + UUID.randomUUID().toString().substring(0, 4);
@@ -99,8 +107,17 @@ public class TournamentServiceImpl implements TournamentService {
                 .allowPlayersToWithdraw(true)
                 .build();
 
-        tournament.setSettings(settings);
-        Tournament saved = tournamentRepository.save(tournament);
+        // 2. Micro-Write Phase on MASTER DB: Atomic save with collision retry
+        Tournament saved;
+        try {
+            saved = tournamentPersistenceService.saveTournamentAndSettings(tournament, settings);
+        } catch (DataIntegrityViolationException ex) {
+            log.warn("Slug/PublicId collision detected during concurrent creation of tournament [{}]. Retrying with salted unique identifier...", slug);
+            String saltedSlug = slug + "-" + UUID.randomUUID().toString().substring(0, 6);
+            tournament.setSlug(saltedSlug);
+            tournament.setPublicId("tourn_" + (saltedSlug.length() > 38 ? saltedSlug.substring(0, 38) : saltedSlug).replace("-", "_"));
+            saved = tournamentPersistenceService.saveTournamentAndSettings(tournament, settings);
+        }
 
         log.info("Tournament draft created: ID [{}] slug [{}] by Organizer [{}]",
                 saved.getPublicId(), saved.getSlug(), currentUser.getId());
@@ -114,39 +131,21 @@ public class TournamentServiceImpl implements TournamentService {
     }
 
     @Override
-    @Transactional(readOnly = true)
     public List<TournamentSummaryResponse> getOrganizerTournaments(UserPrincipal currentUser, String status) {
-        validateOrganizerRole(currentUser);
-
-        List<Tournament> list;
-        if (status != null && !status.isBlank()) {
-            TournamentStatus filterStatus = TournamentStatus.fromString(status);
-            if (filterStatus != null) {
-                list = tournamentRepository.findByOrganizerIdAndStatusOrderByCreatedAtDesc(currentUser.getId(), filterStatus);
-            } else {
-                list = tournamentRepository.findByOrganizerIdOrderByCreatedAtDesc(currentUser.getId());
-            }
-        } else {
-            list = tournamentRepository.findByOrganizerIdOrderByCreatedAtDesc(currentUser.getId());
-        }
-
-        return list.stream()
-                .map(t -> TournamentSummaryResponse.fromEntity(t, 0, 0))
-                .toList();
+        return tournamentQueryService.getOrganizerTournaments(currentUser, status);
     }
 
     @Override
-    @Transactional(readOnly = true)
     public TournamentDetailResponse getTournamentById(UserPrincipal currentUser, String idOrSlug) {
-        Tournament tournament = findTournamentByIdentifier(idOrSlug);
-        return TournamentDetailResponse.fromEntity(tournament);
+        return tournamentQueryService.getTournamentById(currentUser, idOrSlug);
     }
 
     @Override
-    @Transactional
     public TournamentDetailResponse updateTournament(UserPrincipal currentUser, String idOrSlug, UpdateTournamentRequest request) {
         validateOrganizerRole(currentUser);
-        Tournament tournament = findTournamentByIdentifier(idOrSlug);
+
+        // 1. Read Phase on READ REPLICA: Fetch tournament and validate ownership
+        Tournament tournament = tournamentQueryService.findTournamentByIdentifier(idOrSlug);
         validateTournamentOwnership(tournament, currentUser);
 
         if (request.getName() != null && !request.getName().isBlank()) {
@@ -195,7 +194,8 @@ public class TournamentServiceImpl implements TournamentService {
             tournament.setBannerUrl(request.getBannerUrl().trim());
         }
 
-        Tournament updated = tournamentRepository.save(tournament);
+        // 2. Micro-Write Phase on MASTER DB
+        Tournament updated = tournamentPersistenceService.saveTournament(tournament);
         publicTournamentCache.remove(updated.getSlug());
 
         log.info("Tournament [{}] details updated by Organizer [{}]", updated.getPublicId(), currentUser.getId());
@@ -203,10 +203,11 @@ public class TournamentServiceImpl implements TournamentService {
     }
 
     @Override
-    @Transactional
     public TournamentSettingsResponse saveSettings(UserPrincipal currentUser, String idOrSlug, TournamentSettingsRequest request) {
         validateOrganizerRole(currentUser);
-        Tournament tournament = findTournamentByIdentifier(idOrSlug);
+
+        // 1. Read Phase on READ REPLICA: Validate ownership and retrieve tournament settings
+        Tournament tournament = tournamentQueryService.findTournamentByIdentifier(idOrSlug);
         validateTournamentOwnership(tournament, currentUser);
 
         TournamentSettings settings = tournament.getSettings();
@@ -249,7 +250,7 @@ public class TournamentServiceImpl implements TournamentService {
             settings.setAllowPlayersToWithdraw(request.getAllowPlayersToWithdraw());
         }
         if (request.getCaptainRegistrationMode() != null && !request.getCaptainRegistrationMode().isBlank()) {
-            String mode = request.getCaptainRegistrationMode().trim().toUpperCase(java.util.Locale.ENGLISH);
+            String mode = request.getCaptainRegistrationMode().trim().toUpperCase(Locale.ENGLISH);
             if ("BOTH".equals(mode) || "OPEN".equals(mode)) {
                 settings.setCaptainRegistrationMode("BOTH");
             } else {
@@ -257,7 +258,7 @@ public class TournamentServiceImpl implements TournamentService {
             }
         }
         if (request.getCaptainApprovalMode() != null && !request.getCaptainApprovalMode().isBlank()) {
-            String appMode = request.getCaptainApprovalMode().trim().toUpperCase(java.util.Locale.ENGLISH);
+            String appMode = request.getCaptainApprovalMode().trim().toUpperCase(Locale.ENGLISH);
             if ("AUTO".equals(appMode)) {
                 settings.setCaptainApprovalMode("AUTO");
             } else {
@@ -266,9 +267,9 @@ public class TournamentServiceImpl implements TournamentService {
         }
 
         tournament.setStep(2);
-        settingsRepository.save(settings);
-        tournamentRepository.save(tournament);
 
+        // 2. Micro-Write Phase on MASTER DB
+        tournamentPersistenceService.saveSettings(settings, tournament);
         publicTournamentCache.remove(tournament.getSlug());
 
         log.info("Tournament [{}] rules and settings saved (Step 2) by Organizer [{}]",
@@ -281,10 +282,11 @@ public class TournamentServiceImpl implements TournamentService {
     }
 
     @Override
-    @Transactional
     public PublishTournamentResponse publishTournament(UserPrincipal currentUser, String idOrSlug) {
         validateOrganizerRole(currentUser);
-        Tournament tournament = findTournamentByIdentifier(idOrSlug);
+
+        // 1. Read Phase on READ REPLICA
+        Tournament tournament = tournamentQueryService.findTournamentByIdentifier(idOrSlug);
         validateTournamentOwnership(tournament, currentUser);
 
         tournament.setStatus(TournamentStatus.PUBLISHED);
@@ -300,8 +302,9 @@ public class TournamentServiceImpl implements TournamentService {
 
         tournament.setRegistrationLink(regLink);
         tournament.setCaptainInviteLink(inviteLink);
-        tournamentRepository.save(tournament);
 
+        // 2. Micro-Write Phase on MASTER DB
+        tournamentPersistenceService.saveTournament(tournament);
         publicTournamentCache.remove(tournament.getSlug());
 
         log.info("Tournament [{}] published! Live registration link: [{}]", tournament.getPublicId(), regLink);
@@ -314,59 +317,24 @@ public class TournamentServiceImpl implements TournamentService {
     }
 
     @Override
-    @Transactional
     public void deleteTournament(UserPrincipal currentUser, String idOrSlug) {
         validateOrganizerRole(currentUser);
-        Tournament tournament = findTournamentByIdentifier(idOrSlug);
+
+        // 1. Read Phase on READ REPLICA
+        Tournament tournament = tournamentQueryService.findTournamentByIdentifier(idOrSlug);
         validateTournamentOwnership(tournament, currentUser);
 
         publicTournamentCache.remove(tournament.getSlug());
-        tournamentRepository.delete(tournament);
+
+        // 2. Micro-Write Phase on MASTER DB
+        tournamentPersistenceService.deleteTournament(tournament);
 
         log.info("Tournament [{}] deleted by Organizer [{}]", idOrSlug, currentUser.getId());
     }
 
     @Override
-    @Transactional(readOnly = true)
     public PublicTournamentResponse getPublicTournamentBySlug(String slug) {
-        if (slug == null || slug.isBlank()) {
-            throw new BadRequestException("INVALID_SLUG", "Tournament slug cannot be empty.");
-        }
-
-        String normalizedSlug = slug.trim().toLowerCase();
-
-        // 1. High-speed L1 cache hit check
-        PublicTournamentResponse cached = publicTournamentCache.get(normalizedSlug);
-        if (cached != null) {
-            return cached;
-        }
-
-        // 2. Database lookup
-        Tournament tournament = tournamentRepository.findByPublicIdOrSlugWithSettings(normalizedSlug)
-                .orElseThrow(() -> new ResourceNotFoundException("TOURNAMENT_NOT_FOUND", "Tournament not found for slug: " + slug));
-
-        PublicTournamentResponse response = PublicTournamentResponse.fromEntity(tournament, 0);
-
-        // 3. Cache population
-        publicTournamentCache.put(normalizedSlug, response);
-        return response;
-    }
-
-    private Tournament findTournamentByIdentifier(String idOrSlug) {
-        if (idOrSlug == null || idOrSlug.isBlank()) {
-            throw new BadRequestException("INVALID_IDENTIFIER", "Tournament identifier cannot be empty.");
-        }
-        String trimmed = idOrSlug.trim();
-
-        // Check public ID or slug
-        return tournamentRepository.findByPublicIdOrSlugWithSettings(trimmed)
-                .or(() -> {
-                    if (trimmed.matches("^\\d+$")) {
-                        return tournamentRepository.findByIdWithSettings(Long.parseLong(trimmed));
-                    }
-                    return java.util.Optional.empty();
-                })
-                .orElseThrow(() -> new ResourceNotFoundException("TOURNAMENT_NOT_FOUND", "Tournament not found for: " + idOrSlug));
+        return tournamentQueryService.getPublicTournamentBySlug(slug, publicTournamentCache);
     }
 
     private void validateOrganizerRole(UserPrincipal currentUser) {
@@ -379,23 +347,5 @@ public class TournamentServiceImpl implements TournamentService {
         if (!tournament.getOrganizerId().equals(currentUser.getId())) {
             throw new ForbiddenException("TOURNAMENT_ACCESS_DENIED", "Access denied: You are not the owner of this tournament.");
         }
-    }
-
-    private String generateUniqueSlug(String name) {
-        String base = toSlug(name);
-        String candidate = base;
-        int counter = 1;
-        while (tournamentRepository.existsBySlug(candidate)) {
-            candidate = base + "-" + counter++;
-        }
-        return candidate;
-    }
-
-    private String toSlug(String input) {
-        if (input == null) return "tournament";
-        String nowhitespace = input.trim().replaceAll("\\s+", "-");
-        String normalized = Normalizer.normalize(nowhitespace, Normalizer.Form.NFD);
-        String slug = normalized.replaceAll("[^\\w-]", "").replaceAll("-+", "-").toLowerCase(Locale.ENGLISH);
-        return slug.isBlank() ? "tournament" : slug;
     }
 }

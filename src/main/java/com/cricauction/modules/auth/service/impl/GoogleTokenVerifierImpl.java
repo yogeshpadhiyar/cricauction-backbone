@@ -95,9 +95,12 @@ public class GoogleTokenVerifierImpl implements GoogleTokenVerifier {
 
                     } catch (UnauthorizedException e) {
                         throw e;
+                    } catch (org.springframework.web.client.HttpClientErrorException e) {
+                        log.warn("Google OAuth2 rejected token with status [{}]: {}", e.getStatusCode(), e.getMessage());
+                        throw new UnauthorizedException("INVALID_GOOGLE_TOKEN", "Invalid or expired Google token.");
                     } catch (Exception e) {
                         log.error("Failed to verify Google token with Google OAuth2 servers: {}", e.getMessage());
-                        throw new UnauthorizedException("INVALID_GOOGLE_TOKEN", "Invalid or expired Google token: " + e.getMessage());
+                        throw new RuntimeException("Downstream Google OAuth2 server error: " + e.getMessage(), e);
                     }
                 }), null);
     }

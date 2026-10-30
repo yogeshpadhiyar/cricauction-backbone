@@ -1,7 +1,7 @@
 # CricAuction Module 2: Profile & Cricket Profile Management
 ## Comprehensive Technical Architecture & Developer Reference Manual
 
-> **Document Status**: Production Complete | Tested against PostgreSQL 16+ | 5,000 Concurrent Users Benchmark Verified (1.48s – 1.53s Elapsed Time, 3,270 Req/Sec Throughput, 100% Success Rate)  
+> **Document Status**: Production Complete | Tested against PostgreSQL 16+ | 83/83 Automated Tests Passing (0 Failures, 0 Errors, 0 Skipped) | 5,000 Concurrent Users Benchmark Verified (1.48s – 1.53s Elapsed Time, 3,270 Req/Sec Throughput, 100% Success Rate)  
 > **Audience**: Backend Engineers, DevOps, System Architects, Mobile/Frontend Engineers  
 > **Maintainer**: CricAuction Engineering Team  
 
@@ -106,6 +106,8 @@ src/main/java/com/cricauction/
         │   └── UserProfileController.java       # Clean REST endpoints with ownership validation
         ├── service/
         │   ├── ProfileService.java              # Core business contract (ISP compliant)
+        │   ├── ProfileQueryService.java         # CQRS Read phase (Read Replica routing)
+        │   ├── ProfilePersistenceService.java   # CQRS Micro-write phase (Master DB routing)
         │   └── impl/
         │       └── ProfileServiceImpl.java      # Transactional coordinator & ownership verifier
         ├── storage/                             # Strategy Pattern for File/Image Storage
@@ -282,6 +284,24 @@ classDiagram
     FileStorageStrategy <|.. S3FileStorageStrategy : Ready to inject
     ProfileServiceImpl --> FileStorageStrategy : Depends on Abstraction (DIP)
 ```
+
+### 5.1 Storage Security & Path Traversal Confinement
+The default [`LocalFileStorageStrategy.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/profile/storage/impl/LocalFileStorageStrategy.java) enforces strict defense-in-depth controls:
+1. **Directory Root Confinement (`SEC-STORAGE-UPLOAD-UNCONFINED-ROOT`)**:
+   - Both `uploadFile` and `deleteFile` strictly resolve and normalize the target path against the configured `baseRoot`:
+   ```java
+   Path baseRoot = Paths.get(baseDir).toAbsolutePath().normalize();
+   Path targetDir = baseRoot.resolve(subDirectory.startsWith("/") ? subDirectory.substring(1) : subDirectory).normalize();
+   if (!targetDir.startsWith(baseRoot)) {
+       throw new BadRequestException("INVALID_PATH", "Upload path must stay within the base directory.");
+   }
+   ```
+2. **File Extension & MIME Type Whitelisting**:
+   - Allowed MIME types: `image/jpeg`, `image/png`, `image/webp`.
+   - Allowed file extensions: `.jpg`, `.jpeg`, `.png`, `.webp`.
+   - Rejects executable or script extensions preventing Stored XSS or Remote Code Execution.
+3. **Randomized File Naming**:
+   - Files are written using randomized UUID filenames (`UUID.randomUUID().toString().replace("-", "")`), preventing file overwrite collisions and directory enumeration attacks.
 
 ---
 

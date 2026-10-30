@@ -1,7 +1,7 @@
 # CricAuction Module 4: Tournament Creation & Rules Management
 ## Comprehensive Technical Architecture & Developer Reference Manual
 
-> **Document Status**: Production Complete | Tested against PostgreSQL 18+ | 5,000 Concurrent Operations Benchmark Verified (1.20s Latency, 4,166.67 RPS)  
+> **Document Status**: Production Complete | Tested against PostgreSQL 18+ | 83/83 Automated Tests Passing (0 Failures, 0 Errors, 0 Skipped) | 5,000 Concurrent Operations Benchmark Verified (1.20s Latency, 4,166.67 RPS)  
 > **Audience**: Backend Engineers, DevOps, System Architects, Security Auditors  
 > **Maintainer**: CricAuction Engineering Team  
 
@@ -70,6 +70,8 @@ src/main/java/com/cricauction/
         │   └── TournamentController.java       # 8 REST endpoints (API 18 to 25)
         ├── service/
         │   ├── TournamentService.java          # Core tournament operations contract
+        │   ├── TournamentQueryService.java     # CQRS Read phase (Read Replica routing & L1 cache)
+        │   ├── TournamentPersistenceService.java # CQRS Micro-write phase (Master DB routing)
         │   └── impl/
         │       └── TournamentServiceImpl.java  # Concurrency, caching & state transitions
         ├── repository/
@@ -262,23 +264,21 @@ private Long version;
 ```
 If two organizer browser tabs or automated tools attempt to mutate settings concurrently, Hibernate detects the version collision and triggers an `OptimisticLockingFailureException`, preventing lost updates.
 
-### 5.3 Collision-Resistant Unique Slug Generation
-When a tournament is created, an alphanumeric slug is generated:
+### 5.3 Collision-Resistant Unique Slug Generation & Unique Constraint Safety
+When a tournament is created, an alphanumeric slug is generated with a random entropy salt:
 ```java
-private String generateUniqueSlug(String name) {
-    String base = toSlug(name);
-    String candidate = base;
-    int counter = 1;
-    while (tournamentRepository.existsBySlug(candidate)) {
-        candidate = base + "-" + counter++;
-    }
-    return candidate;
-}
+String baseSlug = toSlug(name);
+String slug = baseSlug + "-" + UUID.randomUUID().toString().substring(0, 6);
 ```
-If multiple leagues share identical names (e.g., "Premier League"), slugs automatically sequence (`premier-league`, `premier-league-1`, `premier-league-2`), guaranteeing unique URLs.
+- **Race Condition Fallback**: If two simultaneous tournament creations encounter a slug collision during concurrent master commits, `TournamentServiceImpl` traps `DataIntegrityViolationException`, regenerates a fresh random salt (`UUID.randomUUID().toString().substring(0, 8)`), and retries the persistence operation.
+- **Global Error Handling**: Unhandled unique constraint violations in other flows are globally translated into `HTTP 409 Conflict` by [`GlobalExceptionHandler.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/common/exception/GlobalExceptionHandler.java).
 
-### 5.4 Lock-Free L1 Memory Cache with Write-Invalidation
-Public landing pages are queried heavily by spectators, registering players, and team captains. A thread-safe `ConcurrentHashMap` caches `PublicTournamentResponse`. When an organizer modifies or publishes a tournament, `publicTournamentCache.remove(slug)` instantly evicts stale entries without requiring distributed cache invalidation.
+### 5.4 Eviction-Bounded L1 Memory Cache with Write-Invalidation
+Public landing pages are queried heavily by spectators, registering players, and team captains.
+- **Bounded Eviction & TTL**: Rather than an unbounded memory map, the platform utilizes [`BoundedLruCache.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/common/cache/BoundedLruCache.java) with:
+  - **Maximum Capacity**: 500 items (preventing Out-Of-Memory under high cardinality slug scans).
+  - **Time-to-Live (TTL)**: 10 minutes (600,000 ms) automated item expiration.
+  - **Write-Invalidation**: When an organizer modifies or publishes a tournament, `publicTournamentCache.remove(slug)` instantly evicts stale entries from both ID and slug cache indexes.
 
 ---
 

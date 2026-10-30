@@ -1,5 +1,8 @@
 package com.cricauction.common.resilience;
 
+import com.cricauction.common.exception.BadRequestException;
+import com.cricauction.common.exception.ForbiddenException;
+import com.cricauction.common.exception.UnauthorizedException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -10,6 +13,9 @@ import java.util.function.Supplier;
 /**
  * Resilient Retry mechanism with exponential backoff and randomized jitter
  * for external network calls and transient database failures.
+ *
+ * <p>Key Fix: Non-retryable client errors (UnauthorizedException, BadRequestException)
+ * are bypassed immediately, preventing wasted latency and downstream API hammering.
  */
 @Slf4j
 @Component
@@ -21,7 +27,9 @@ public class ResilienceRetry {
 
     public <T> T executeWithRetry(String operationName, Supplier<T> operation) {
         return executeWithRetry(operationName, operation, DEFAULT_MAX_ATTEMPTS, DEFAULT_INITIAL_BACKOFF_MS,
-                DEFAULT_MULTIPLIER, ex -> true);
+                DEFAULT_MULTIPLIER, ex -> !(ex instanceof UnauthorizedException
+                        || ex instanceof BadRequestException
+                        || ex instanceof ForbiddenException));
     }
 
     public <T> T executeWithRetry(String operationName,
@@ -39,7 +47,9 @@ public class ResilienceRetry {
                 return operation.get();
             } catch (Throwable ex) {
                 if (attempt >= maxAttempts || (retryOn != null && !retryOn.test(ex))) {
-                    log.error("[RETRY EXHAUSTED: {}] Failed after {} attempts: {}", operationName, attempt, ex.getMessage());
+                    if (attempt > 1) {
+                        log.error("[RETRY EXHAUSTED: {}] Failed after {} attempts: {}", operationName, attempt, ex.getMessage());
+                    }
                     throw ex;
                 }
 
@@ -47,7 +57,7 @@ public class ResilienceRetry {
                 long jitter = ThreadLocalRandom.current().nextLong(10, 50);
                 long sleepTime = currentBackoff + jitter;
 
-                log.warn("[RETRY: {}] Attempt {} failed ({}). Retrying in {} ms...",
+                log.warn("[RETRY: {}] Transient attempt {} failed ({}). Retrying in {} ms...",
                         operationName, attempt, ex.getMessage(), sleepTime);
 
                 try {

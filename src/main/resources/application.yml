@@ -17,11 +17,13 @@ spring:
       enabled: true
 
   datasource:
+    # Master / Primary Database Connection (Handles Writes, Mutating Transactions, and DDL Migrations)
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:cricauction}
     username: ${DB_USER:yogeshkumarpadhiyar}
     password: ${DB_PASSWORD:}
     driver-class-name: org.postgresql.Driver
     hikari:
+      pool-name: CricAuction-Master-Pool
       maximum-pool-size: 50
       minimum-idle: 25
       idle-timeout: 300000
@@ -34,10 +36,31 @@ spring:
         prepStmtCacheSqlLimit: 2048
         useServerPrepStmts: true
 
+    # Read Replica Database Connection (Handles @Transactional(readOnly = true) queries)
+    replica:
+      url: jdbc:postgresql://${DB_REPLICA_HOST:${DB_HOST:localhost}}:${DB_REPLICA_PORT:${DB_PORT:5432}}/${DB_REPLICA_NAME:${DB_NAME:cricauction}}
+      username: ${DB_REPLICA_USER:${DB_USER:yogeshkumarpadhiyar}}
+      password: ${DB_REPLICA_PASSWORD:${DB_PASSWORD:}}
+      driver-class-name: org.postgresql.Driver
+      hikari:
+        pool-name: CricAuction-Replica-Pool
+        read-only: true
+        maximum-pool-size: 50
+        minimum-idle: 25
+        idle-timeout: 300000
+        max-lifetime: 1800000
+        connection-timeout: 10000
+        leak-detection-threshold: 2000
+        data-source-properties:
+          cachePrepStmts: true
+          prepStmtCacheSize: 250
+          prepStmtCacheSqlLimit: 2048
+          useServerPrepStmts: true
+
   jpa:
     open-in-view: false
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
@@ -51,6 +74,8 @@ spring:
     locations: classpath:db/migration
 
 cricauction:
+  auth:
+    cleanup-cron: ${AUTH_CLEANUP_CRON:0 0 * * * *}
   security:
     bcrypt-strength: ${BCRYPT_STRENGTH:10}
     jwt:

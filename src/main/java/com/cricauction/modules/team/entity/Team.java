@@ -17,7 +17,10 @@ import java.util.List;
                 @Index(name = "idx_teams_tournament", columnList = "tournament_id"),
                 @Index(name = "idx_teams_captain", columnList = "captain_id"),
                 @Index(name = "idx_teams_invite_code", columnList = "invite_code"),
-                @Index(name = "idx_teams_tournament_status", columnList = "tournament_id, status")
+                @Index(name = "idx_teams_tournament_status", columnList = "tournament_id, status"),
+                @Index(name = "idx_teams_tournament_status_id", columnList = "tournament_id, status, id"),
+                @Index(name = "idx_teams_tournament_id", columnList = "tournament_id, id"),
+                @Index(name = "idx_teams_tournament_status_created", columnList = "tournament_id, status, created_at")
         }
 )
 @Getter
@@ -61,7 +64,7 @@ public class Team {
     @Builder.Default
     private Long remainingBudget = 1000000L;
 
-    @Column(name = "invite_code", unique = true, nullable = false, length = 100)
+    @Column(name = "invite_code", nullable = false, unique = true, length = 100)
     private String inviteCode;
 
     @Column(name = "status", nullable = false, length = 30)
@@ -78,20 +81,10 @@ public class Team {
     private List<SquadMember> squadMembers = new ArrayList<>();
 
     @CreationTimestamp
-    @Column(name = "created_at", updatable = false)
+    @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
     @UpdateTimestamp
-    @Column(name = "updated_at")
+    @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
-
-    public void addSquadMember(SquadMember member) {
-        squadMembers.add(member);
-        member.setTeam(this);
-    }
-
-    public void removeSquadMember(SquadMember member) {
-        squadMembers.remove(member);
-        member.setTeam(null);
-    }
 }

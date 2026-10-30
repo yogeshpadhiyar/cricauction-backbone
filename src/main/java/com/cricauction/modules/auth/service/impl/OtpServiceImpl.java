@@ -2,22 +2,26 @@ package com.cricauction.modules.auth.service.impl;
 
 import com.cricauction.common.exception.BadRequestException;
 import com.cricauction.modules.auth.dto.response.SendOtpResponse;
-import com.cricauction.modules.auth.entity.OtpVerification;
-import com.cricauction.modules.auth.repository.OtpVerificationRepository;
+import com.cricauction.modules.auth.service.OtpPersistenceService;
+import com.cricauction.modules.auth.service.OtpQueryService;
 import com.cricauction.modules.auth.service.OtpService;
 import com.cricauction.modules.auth.strategy.OtpDeliveryStrategy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
-import java.util.Optional;
 
+/**
+ * Orchestrator Service for OTP generation, delivery, and verification implementing Strategy 1 (Read-Before-Write).
+ * - Cooldown throttle check routes to Read Replica (OtpQueryService).
+ * - OTP generation executes in-memory.
+ * - DB write executed via fast micro-transaction on Master DB (OtpPersistenceService).
+ * - SMS / Email network delivery executes completely OUTSIDE database transactions (Zero DB connection held).
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -25,7 +29,8 @@ public class OtpServiceImpl implements OtpService {
 
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
-    private final OtpVerificationRepository otpRepository;
+    private final OtpQueryService otpQueryService;
+    private final OtpPersistenceService otpPersistenceService;
     private final List<OtpDeliveryStrategy> deliveryStrategies;
 
     @Value("${cricauction.otp.expiration-seconds:300}")
@@ -37,7 +42,6 @@ public class OtpServiceImpl implements OtpService {
     private static final int MAX_ATTEMPTS = 5;
 
     @Override
-    @Transactional
     public SendOtpResponse sendOtp(String identifier, String purpose) {
         if (identifier == null || identifier.isBlank()) {
             throw new BadRequestException("INVALID_IDENTIFIER", "Target mobile number or email is required.");
@@ -46,48 +50,18 @@ public class OtpServiceImpl implements OtpService {
         String target = identifier.trim().toLowerCase();
         String normalizedPurpose = purpose != null ? purpose.trim().toLowerCase() : "login";
 
-        // Check cooldown throttle against latest dispatch timestamp
-        Optional<OtpVerification> existingOpt = otpRepository.findByIdentifierAndPurpose(target, normalizedPurpose);
-        Instant now = Instant.now();
-        if (existingOpt.isPresent()) {
-            OtpVerification existing = existingOpt.get();
-            Instant referenceTime = existing.getLastSentAt() != null ? existing.getLastSentAt() : existing.getCreatedAt();
-            if (referenceTime != null) {
-                long secondsSinceLast = Duration.between(referenceTime, now).getSeconds();
-                if (secondsSinceLast < retryAfterSeconds) {
-                    long waitTime = retryAfterSeconds - secondsSinceLast;
-                    throw new BadRequestException("OTP_COOLDOWN_ACTIVE",
-                            "Please wait " + waitTime + " seconds before requesting a new OTP.");
-                }
-            }
-        }
+        // Step 1: Read Replica throttle check (Zero Master connection)
+        otpQueryService.validateCooldown(target, normalizedPurpose, retryAfterSeconds);
 
-        // Generate 6-digit numeric OTP using cryptographically secure SecureRandom
+        // Step 2: Generate 6-digit numeric OTP using cryptographically secure SecureRandom
         String otpCode = String.format("%06d", SECURE_RANDOM.nextInt(1_000_000));
+        Instant now = Instant.now();
         Instant expiresAt = now.plusSeconds(otpExpirationSeconds);
 
-        boolean isEmail = target.contains("@");
-        OtpVerification otpVerification = existingOpt.orElseGet(() ->
-                OtpVerification.builder()
-                        .identifier(target)
-                        .email(isEmail ? target : null)
-                        .mobile(isEmail ? null : target)
-                        .purpose(normalizedPurpose)
-                        .build()
-        );
+        // Step 3: Fast micro-write on Master DB (~1 ms connection hold)
+        otpPersistenceService.saveOrUpdateOtp(target, normalizedPurpose, otpCode, expiresAt, now);
 
-        if (isEmail) {
-            otpVerification.setEmail(target);
-        } else {
-            otpVerification.setMobile(target);
-        }
-        otpVerification.setOtpCode(otpCode);
-        otpVerification.setAttempts(0);
-        otpVerification.setExpiresAt(expiresAt);
-        otpVerification.setLastSentAt(now);
-        otpRepository.save(otpVerification);
-
-        // Dispatch via Strategy (SMS or EMAIL depending on identifier format)
+        // Step 4: Dispatch via external SMS/Email network service OUTSIDE DB transaction (Zero connection held)
         dispatchOtp(target, otpCode, normalizedPurpose);
 
         return SendOtpResponse.builder()
@@ -97,7 +71,6 @@ public class OtpServiceImpl implements OtpService {
     }
 
     @Override
-    @Transactional
     public boolean verifyOtp(String identifier, String otp, String purpose) {
         if (identifier == null || identifier.isBlank()) {
             throw new BadRequestException("INVALID_IDENTIFIER", "Mobile number or email is required.");
@@ -109,29 +82,7 @@ public class OtpServiceImpl implements OtpService {
         String target = identifier.trim().toLowerCase();
         String normalizedPurpose = purpose != null ? purpose.trim().toLowerCase() : "login";
 
-        OtpVerification verification = otpRepository.findByIdentifierAndPurpose(target, normalizedPurpose)
-                .orElseThrow(() -> new BadRequestException("INVALID_OTP", "No active OTP found for " + target));
-
-        if (verification.isExpired()) {
-            otpRepository.deleteByIdentifierAndPurpose(target, normalizedPurpose);
-            throw new BadRequestException("OTP_EXPIRED", "OTP has expired. Please request a new OTP.");
-        }
-
-        if (verification.getAttempts() >= MAX_ATTEMPTS) {
-            otpRepository.deleteByIdentifierAndPurpose(target, normalizedPurpose);
-            throw new BadRequestException("MAX_ATTEMPTS_EXCEEDED", "Maximum verification attempts exceeded. Please request a new OTP.");
-        }
-
-        if (!verification.getOtpCode().equals(otp.trim())) {
-            verification.setAttempts(verification.getAttempts() + 1);
-            otpRepository.save(verification);
-            int remaining = MAX_ATTEMPTS - verification.getAttempts();
-            throw new BadRequestException("INVALID_OTP", "Invalid OTP entered. " + remaining + " attempts remaining.");
-        }
-
-        // OTP verified successfully -> cleanup record
-        otpRepository.deleteByIdentifierAndPurpose(target, normalizedPurpose);
-        return true;
+        return otpPersistenceService.verifyAndConsumeOtp(target, otp, normalizedPurpose, MAX_ATTEMPTS);
     }
 
     @Override

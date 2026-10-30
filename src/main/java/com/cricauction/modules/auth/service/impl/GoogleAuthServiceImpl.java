@@ -5,12 +5,9 @@ import com.cricauction.modules.auth.dto.request.GoogleAuthRequest;
 import com.cricauction.modules.auth.dto.response.AuthResponse;
 import com.cricauction.modules.auth.dto.response.GoogleUserInfo;
 import com.cricauction.modules.auth.dto.response.UserProfileResponse;
-import com.cricauction.modules.auth.entity.Role;
 import com.cricauction.modules.auth.entity.User;
-import com.cricauction.modules.auth.entity.enums.AuthProvider;
-import com.cricauction.modules.auth.entity.enums.UserRole;
-import com.cricauction.modules.auth.repository.RoleRepository;
-import com.cricauction.modules.auth.repository.UserRepository;
+import com.cricauction.modules.auth.service.AuthPersistenceService;
+import com.cricauction.modules.auth.service.AuthQueryService;
 import com.cricauction.modules.auth.service.GoogleAuthService;
 import com.cricauction.modules.auth.service.GoogleTokenVerifier;
 import com.cricauction.modules.auth.service.TokenService;
@@ -18,89 +15,47 @@ import com.cricauction.security.JwtTokenProvider;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
 
+/**
+ * Orchestrator Service for Google OAuth2 authentication implementing Strategy 1 (Read-Before-Write).
+ * - Google ID token network verification executes outside DB transactions (Zero DB connection held).
+ * - User pre-check routes to Read Replica (AuthQueryService).
+ * - User creation/linkage executes on Master DB via fast micro-write (AuthPersistenceService).
+ * - JWT token issuance executes without blocking DB connections.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class GoogleAuthServiceImpl implements GoogleAuthService {
 
     private final GoogleTokenVerifier googleTokenVerifier;
-    private final UserRepository userRepository;
-    private final RoleRepository roleRepository;
+    private final AuthQueryService authQueryService;
+    private final AuthPersistenceService authPersistenceService;
     private final TokenService tokenService;
     private final JwtTokenProvider jwtTokenProvider;
 
     @Override
-    @Transactional
     public AuthResponse authenticateWithGoogle(GoogleAuthRequest request) {
-        // 1. Verify Google ID token
+        // Step 1: External network verification OUTSIDE DB transaction (Zero DB connection held)
         GoogleUserInfo googleUser = googleTokenVerifier.verifyToken(request.getIdToken());
 
-        // 2. Check if user already exists by Google ID or Email in a single consolidated query
-        Optional<User> existingUserOpt = userRepository.findByGoogleIdOrEmail(googleUser.getSub(), googleUser.getEmail());
-
-        User user;
-        if (existingUserOpt.isPresent()) {
-            user = existingUserOpt.get();
-
-            if (!user.isActive()) {
-                throw new UnauthorizedException("ACCOUNT_SUSPENDED", "Your account has been deactivated. Please contact support.");
-            }
-
-            // Link Google ID if not already linked
-            boolean modified = false;
-            if (user.getGoogleId() == null) {
-                user.setGoogleId(googleUser.getSub());
-                modified = true;
-            }
-            if (!user.isEmailVerified() && googleUser.isEmailVerified()) {
-                user.setEmailVerified(true);
-                modified = true;
-            }
-            if (user.getProfilePhotoUrl() == null && googleUser.getPicture() != null) {
-                user.setProfilePhotoUrl(googleUser.getPicture());
-                modified = true;
-            }
-            if (modified) {
-                user = userRepository.save(user);
-            }
-            log.info("Google sign-in successful for user ID [{}] email [{}]", user.getId(), user.getEmail());
-        } else {
-            // New user registration via Google
-            UserRole role = UserRole.PLAYER;
-            if (request.getRole() != null && !request.getRole().isBlank()) {
-                try {
-                    role = UserRole.fromString(request.getRole());
-                } catch (IllegalArgumentException e) {
-                    role = UserRole.PLAYER;
-                }
-            }
-
-            user = User.builder()
-                    .fullName(googleUser.getName())
-                    .email(googleUser.getEmail())
-                    .googleId(googleUser.getSub())
-                    .authProvider(AuthProvider.GOOGLE)
-                    .city(request.getCity())
-                    .mobile(request.getMobile())
-                    .profilePhotoUrl(googleUser.getPicture())
-                    .isEmailVerified(googleUser.isEmailVerified())
-                    .isMobileVerified(false)
-                    .isActive(true)
-                    .build();
-
-            UserRole finalRole = role;
-            Role roleEntity = roleRepository.findByName(finalRole)
-                    .orElseGet(() -> roleRepository.save(Role.builder().name(finalRole).build()));
-            user.addRole(roleEntity);
-            user = userRepository.save(user);
-            log.info("New user registered via Google OAuth: ID [{}], email [{}]", user.getId(), user.getEmail());
+        // Step 2: Read Replica lookup to check if user already exists
+        Optional<User> existingUserOpt = authQueryService.findByGoogleIdOrEmail(googleUser.getSub(), googleUser.getEmail());
+        if (existingUserOpt.isPresent() && !existingUserOpt.get().isActive()) {
+            throw new UnauthorizedException("ACCOUNT_SUSPENDED", "Your account has been deactivated. Please contact support.");
         }
 
-        // 3. Issue CricAuction JWT tokens
+        // Step 3: Fast micro-write on Master DB
+        User user = authPersistenceService.saveOrUpdateGoogleUser(
+                googleUser,
+                request.getCity(),
+                request.getMobile(),
+                request.getRole()
+        );
+
+        // Step 4: Issue tokens
         String accessToken = jwtTokenProvider.generateAccessToken(user);
         String refreshToken = tokenService.createRefreshToken(user);
 

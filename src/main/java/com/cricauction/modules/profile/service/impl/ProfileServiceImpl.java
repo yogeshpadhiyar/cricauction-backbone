@@ -1,18 +1,16 @@
 package com.cricauction.modules.profile.service.impl;
 
-import com.cricauction.common.exception.ConflictException;
 import com.cricauction.common.exception.ForbiddenException;
-import com.cricauction.common.exception.ResourceNotFoundException;
 import com.cricauction.common.exception.UnauthorizedException;
 import com.cricauction.modules.auth.dto.response.UserProfileResponse;
 import com.cricauction.modules.auth.entity.User;
-import com.cricauction.modules.auth.repository.UserRepository;
 import com.cricauction.modules.profile.dto.request.UpdatePlayerProfileRequest;
 import com.cricauction.modules.profile.dto.request.UpdateUserProfileRequest;
 import com.cricauction.modules.profile.dto.response.PlayerProfileResponse;
 import com.cricauction.modules.profile.dto.response.ProfilePhotoUploadResponse;
 import com.cricauction.modules.profile.entity.PlayerProfile;
-import com.cricauction.modules.profile.repository.PlayerProfileRepository;
+import com.cricauction.modules.profile.service.ProfilePersistenceService;
+import com.cricauction.modules.profile.service.ProfileQueryService;
 import com.cricauction.modules.profile.service.ProfileService;
 import com.cricauction.modules.profile.storage.FileStorageStrategy;
 import com.cricauction.security.UserPrincipal;
@@ -20,104 +18,76 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
+/**
+ * Orchestrator Service for User and Player Profiles implementing Strategy 1 (Read-Before-Write).
+ * - Preparatory read operations route to Read Replica (ProfileQueryService).
+ * - Storage file I/O operations execute outside DB transactions (Zero connection held).
+ * - Targeted write operations execute on Master DB via fast micro-transactions (ProfilePersistenceService).
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ProfileServiceImpl implements ProfileService {
 
-    private final UserRepository userRepository;
-    private final PlayerProfileRepository playerProfileRepository;
+    private final ProfileQueryService profileQueryService;
+    private final ProfilePersistenceService profilePersistenceService;
     private final List<FileStorageStrategy> storageStrategies;
 
     @Value("${cricauction.storage.active-strategy:LOCAL}")
     private String activeStorageStrategy;
 
     @Override
-    @Transactional(readOnly = true)
     public UserProfileResponse getUserProfile(UserPrincipal currentUser) {
         if (currentUser == null || currentUser.getId() == null) {
             throw new UnauthorizedException("UNAUTHORIZED", "Authentication required to view profile.");
         }
-        return getUserProfileById(currentUser, currentUser.getId());
+        return profileQueryService.getUserProfileById(currentUser, currentUser.getId());
     }
 
     @Override
-    @Transactional(readOnly = true)
     public UserProfileResponse getUserProfileById(Long userId) {
-        return getUserProfileById(null, userId);
+        return profileQueryService.getUserProfileById(null, userId);
     }
 
     @Override
-    @Transactional(readOnly = true)
     public UserProfileResponse getUserProfileById(UserPrincipal currentUser, Long userId) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("USER_NOT_FOUND", "User profile not found for ID: " + userId));
-
-        PlayerProfile playerProfile = playerProfileRepository.findByUserId(userId).orElse(null);
-        boolean isSelfOrAdmin = currentUser != null && (currentUser.getId().equals(userId) || currentUser.hasRole("admin"));
-        return UserProfileResponse.fromEntity(user, playerProfile, isSelfOrAdmin);
+        return profileQueryService.getUserProfileById(currentUser, userId);
     }
 
     @Override
-    @Transactional
     public UserProfileResponse updateUserProfile(UserPrincipal currentUser, UpdateUserProfileRequest request) {
         validateOwnership(currentUser, request.getUserId());
 
-        User user = userRepository.findById(currentUser.getId())
-                .orElseThrow(() -> new ResourceNotFoundException("USER_NOT_FOUND", "User profile not found."));
+        // Step 1: Preparatory Reads on Read Replica
+        User user = profileQueryService.findActiveUserById(currentUser.getId());
+        profileQueryService.validateMobileAvailability(request.getMobile(), user.getMobile());
 
-        if (!user.isActive()) {
-            throw new ForbiddenException("ACCOUNT_INACTIVE", "Your account is not active. Profile update forbidden.");
-        }
+        // Step 2: Micro-write on Master DB
+        User updated = profilePersistenceService.updateUserProfile(
+                currentUser.getId(),
+                request.getFullName(),
+                request.getMobile(),
+                request.getCity(),
+                request.getBio()
+        );
 
-        if (request.getMobile() != null && !request.getMobile().isBlank()) {
-            String newMobile = request.getMobile().trim();
-            if (!newMobile.equalsIgnoreCase(user.getMobile())) {
-                if (userRepository.existsByMobile(newMobile)) {
-                    throw new ConflictException("MOBILE_ALREADY_EXISTS",
-                            "The mobile number " + newMobile + " is already registered by another account.");
-                }
-                user.setMobile(newMobile);
-                user.setMobileVerified(false);
-            }
-        }
-
-        if (request.getFullName() != null && !request.getFullName().isBlank()) {
-            user.setFullName(request.getFullName().trim());
-        }
-
-        if (request.getCity() != null) {
-            user.setCity(request.getCity().trim());
-        }
-
-        if (request.getBio() != null) {
-            user.setBio(request.getBio().trim());
-        }
-
-        User updated = userRepository.save(user);
-        log.info("Ownership validated. Updated profile for user ID [{}]", updated.getId());
-
-        PlayerProfile playerProfile = playerProfileRepository.findByUserId(updated.getId()).orElse(null);
+        // Step 3: Fetch linked PlayerProfile from Replica for response construction
+        PlayerProfile playerProfile = profileQueryService.findPlayerProfileByUserId(updated.getId()).orElse(null);
         return UserProfileResponse.fromEntity(updated, playerProfile);
     }
 
     @Override
-    @Transactional
     public ProfilePhotoUploadResponse uploadProfilePhoto(UserPrincipal currentUser, MultipartFile file) {
         validateOwnership(currentUser, null);
 
-        User user = userRepository.findById(currentUser.getId())
-                .orElseThrow(() -> new ResourceNotFoundException("USER_NOT_FOUND", "User profile not found."));
+        // Step 1: Preparatory Read on Read Replica (Verify user exists and is active)
+        User user = profileQueryService.findActiveUserById(currentUser.getId());
 
-        if (!user.isActive()) {
-            throw new ForbiddenException("ACCOUNT_INACTIVE", "Your account is not active. Profile photo upload forbidden.");
-        }
-
+        // Step 2: Storage upload I/O execution completely OUTSIDE DB transaction (Zero DB connection held)
         FileStorageStrategy storage = storageStrategies.stream()
                 .filter(s -> s.supports(activeStorageStrategy))
                 .findFirst()
@@ -127,76 +97,37 @@ public class ProfileServiceImpl implements ProfileService {
 
         // Delete old photo if existed locally
         if (user.getProfilePhotoUrl() != null && user.getProfilePhotoUrl().startsWith("http")) {
-            storage.deleteFile(user.getProfilePhotoUrl());
+            try {
+                storage.deleteFile(user.getProfilePhotoUrl());
+            } catch (Exception e) {
+                log.warn("Failed to delete old profile photo: {}", e.getMessage());
+            }
         }
 
-        user.setProfilePhotoUrl(photoUrl);
-        userRepository.save(user);
+        // Step 3: Micro-write on Master DB (~1 ms connection hold)
+        profilePersistenceService.updateProfilePhotoUrl(user.getId(), photoUrl);
 
-        log.info("Ownership validated. Updated profile photo for user ID [{}] -> {}", user.getId(), photoUrl);
         return ProfilePhotoUploadResponse.builder()
                 .profilePhotoUrl(photoUrl)
                 .build();
     }
 
     @Override
-    @Transactional
     public PlayerProfileResponse updatePlayerProfile(UserPrincipal currentUser, UpdatePlayerProfileRequest request) {
         validateOwnership(currentUser, request.getUserId());
 
-        User user = userRepository.findById(currentUser.getId())
-                .orElseThrow(() -> new ResourceNotFoundException("USER_NOT_FOUND", "User not found."));
+        // Step 1: Preparatory Read on Read Replica (Validate user is active)
+        profileQueryService.findActiveUserById(currentUser.getId());
 
-        if (!user.isActive()) {
-            throw new ForbiddenException("ACCOUNT_INACTIVE", "Your account is not active. Player profile update forbidden.");
-        }
-
-        PlayerProfile profile = playerProfileRepository.findByUserId(currentUser.getId())
-                .orElseGet(() -> PlayerProfile.builder()
-                        .userId(currentUser.getId())
-                        .build()
-                );
-
-        profile.setPlayingRole(request.getPlayingRole().trim());
-
-        if (request.getBattingStyle() != null) {
-            profile.setBattingStyle(request.getBattingStyle().trim());
-        }
-        if (request.getBowlingStyle() != null) {
-            profile.setBowlingStyle(request.getBowlingStyle().trim());
-        }
-        if (request.getJerseyNumber() != null) {
-            profile.setJerseyNumber(request.getJerseyNumber());
-        }
-        if (request.getCricHeroesProfileUrl() != null) {
-            profile.setCricHeroesProfileUrl(request.getCricHeroesProfileUrl().trim());
-        }
-        if (request.getPastTournaments() != null) {
-            profile.setPastTournaments(request.getPastTournaments());
-        }
-        if (request.getHighestScore() != null) {
-            profile.setHighestScore(request.getHighestScore());
-        }
-        if (request.getBestBowling() != null) {
-            profile.setBestBowling(request.getBestBowling().trim());
-        }
-
-        PlayerProfile saved = playerProfileRepository.save(profile);
-        log.info("Ownership validated. Updated player cricket bio for user ID [{}] with role [{}]", currentUser.getId(), saved.getPlayingRole());
+        // Step 2: Micro-write on Master DB
+        PlayerProfile saved = profilePersistenceService.updatePlayerProfile(currentUser.getId(), request);
 
         return PlayerProfileResponse.fromEntity(saved);
     }
 
     @Override
-    @Transactional(readOnly = true)
     public PlayerProfileResponse getPlayerProfile(UserPrincipal currentUser) {
-        if (currentUser == null || currentUser.getId() == null) {
-            throw new UnauthorizedException("UNAUTHORIZED", "Authentication required to view player profile.");
-        }
-        PlayerProfile profile = playerProfileRepository.findByUserId(currentUser.getId())
-                .orElseThrow(() -> new ResourceNotFoundException("PROFILE_NOT_FOUND", "Player profile not found for user ID: " + currentUser.getId()));
-
-        return PlayerProfileResponse.fromEntity(profile);
+        return profileQueryService.getPlayerProfile(currentUser);
     }
 
     /**
