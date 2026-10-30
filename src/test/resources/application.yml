@@ -30,6 +30,7 @@ cricauction:
       refresh-token-expiration-ms: 604800000
     rate-limit:
       bypass-enabled: true
+      trust-forwarded-for: false
     google:
       client-id: test-client-id
       allow-mock-tokens: true

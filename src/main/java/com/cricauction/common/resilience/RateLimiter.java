@@ -20,6 +20,7 @@ public class RateLimiter {
     private static final int DEFAULT_MAX_REQUESTS_PER_MINUTE = 300;
     private static final int AUTH_MAX_REQUESTS_PER_MINUTE = 60; // For sensitive auth/OTP endpoints
     private static final long WINDOW_SIZE_MS = 60_000L; // 1 minute sliding window
+    private static final int MAX_MAP_CAPACITY = 10_000; // Upper bound to protect JVM heap
 
     public static class ClientWindow {
         long windowStart;
@@ -39,6 +40,10 @@ public class RateLimiter {
         int limit = isSensitiveEndpoint(uri) ? AUTH_MAX_REQUESTS_PER_MINUTE : DEFAULT_MAX_REQUESTS_PER_MINUTE;
         long now = System.currentTimeMillis();
         String key = clientIp + ":" + (isSensitiveEndpoint(uri) ? "auth" : "gen");
+
+        if (clientWindows.size() > MAX_MAP_CAPACITY) {
+            cleanExpiredWindows(now);
+        }
 
         ClientWindow window = clientWindows.compute(key, (k, existing) -> {
             if (existing == null || now - existing.windowStart > WINDOW_SIZE_MS) {
@@ -79,6 +84,10 @@ public class RateLimiter {
 
     public void reset(String clientIp) {
         clientWindows.entrySet().removeIf(entry -> entry.getKey().startsWith(clientIp));
+    }
+
+    public void cleanExpiredWindows(long now) {
+        clientWindows.entrySet().removeIf(entry -> (now - entry.getValue().windowStart) > WINDOW_SIZE_MS);
     }
 
     private boolean isSensitiveEndpoint(String uri) {

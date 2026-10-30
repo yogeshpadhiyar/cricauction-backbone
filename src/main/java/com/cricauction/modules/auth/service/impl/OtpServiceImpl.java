@@ -46,21 +46,25 @@ public class OtpServiceImpl implements OtpService {
         String target = identifier.trim().toLowerCase();
         String normalizedPurpose = purpose != null ? purpose.trim().toLowerCase() : "login";
 
-        // Check cooldown throttle
+        // Check cooldown throttle against latest dispatch timestamp
         Optional<OtpVerification> existingOpt = otpRepository.findByIdentifierAndPurpose(target, normalizedPurpose);
+        Instant now = Instant.now();
         if (existingOpt.isPresent()) {
             OtpVerification existing = existingOpt.get();
-            long secondsSinceCreation = Duration.between(existing.getCreatedAt(), Instant.now()).getSeconds();
-            if (secondsSinceCreation < retryAfterSeconds) {
-                long waitTime = retryAfterSeconds - secondsSinceCreation;
-                throw new BadRequestException("OTP_COOLDOWN_ACTIVE",
-                        "Please wait " + waitTime + " seconds before requesting a new OTP.");
+            Instant referenceTime = existing.getLastSentAt() != null ? existing.getLastSentAt() : existing.getCreatedAt();
+            if (referenceTime != null) {
+                long secondsSinceLast = Duration.between(referenceTime, now).getSeconds();
+                if (secondsSinceLast < retryAfterSeconds) {
+                    long waitTime = retryAfterSeconds - secondsSinceLast;
+                    throw new BadRequestException("OTP_COOLDOWN_ACTIVE",
+                            "Please wait " + waitTime + " seconds before requesting a new OTP.");
+                }
             }
         }
 
         // Generate 6-digit numeric OTP using cryptographically secure SecureRandom
         String otpCode = String.format("%06d", SECURE_RANDOM.nextInt(1_000_000));
-        Instant expiresAt = Instant.now().plusSeconds(otpExpirationSeconds);
+        Instant expiresAt = now.plusSeconds(otpExpirationSeconds);
 
         boolean isEmail = target.contains("@");
         OtpVerification otpVerification = existingOpt.orElseGet(() ->
@@ -80,6 +84,7 @@ public class OtpServiceImpl implements OtpService {
         otpVerification.setOtpCode(otpCode);
         otpVerification.setAttempts(0);
         otpVerification.setExpiresAt(expiresAt);
+        otpVerification.setLastSentAt(now);
         otpRepository.save(otpVerification);
 
         // Dispatch via Strategy (SMS or EMAIL depending on identifier format)

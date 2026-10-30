@@ -196,6 +196,52 @@ class AuthControllerTest {
     }
 
     @Test
+    @DisplayName("3b. POST /api/v1/auth/otp/send - Cooldown enforced on rapid resends and refreshed on subsequent dispatches (FPR-AUTH-OTP-COOLDOWN-BYPASS)")
+    void sendOtp_CooldownEnforcedOnSubsequentRequests() throws Exception {
+        SendOtpRequest request = SendOtpRequest.builder()
+                .mobile("+919876543299")
+                .purpose("signup_verification")
+                .build();
+
+        // 1. Initial OTP dispatch succeeds
+        mockMvc.perform(post("/api/v1/auth/otp/send")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success", is(true)));
+
+        // 2. Immediate 2nd request is blocked by cooldown throttle
+        mockMvc.perform(post("/api/v1/auth/otp/send")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success", is(false)))
+                .andExpect(jsonPath("$.error.code", is("OTP_COOLDOWN_ACTIVE")));
+
+        // 3. Simulate passage of 50 seconds by aging lastSentAt and createdAt
+        OtpVerification otp = otpRepository.findByIdentifierAndPurpose("+919876543299", "signup_verification")
+                .orElseThrow();
+        otp.setLastSentAt(Instant.now().minusSeconds(50));
+        otpRepository.save(otp);
+
+        // 4. After 50 seconds, 2nd dispatch succeeds
+        mockMvc.perform(post("/api/v1/auth/otp/send")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success", is(true)));
+
+        // 5. CRITICAL REGRESSION CHECK: Immediate 3rd request MUST be blocked by cooldown throttle
+        // (Previously bypassed because createdAt was updatable=false and remained permanently aged >45s)
+        mockMvc.perform(post("/api/v1/auth/otp/send")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success", is(false)))
+                .andExpect(jsonPath("$.error.code", is("OTP_COOLDOWN_ACTIVE")));
+    }
+
+    @Test
     @DisplayName("4. POST /api/v1/auth/otp/verify - Verify OTP for signup verification")
     void verifyOtp_SignupVerification_Success() throws Exception {
         createTestUser("Hardik Patel", "hardik@example.com", "+919876543210", "Pass123456!", UserRole.PLAYER);

@@ -101,7 +101,12 @@ public class LocalFileStorageStrategy implements FileStorageStrategy {
         }
         try {
             String relative = fileUrl.replace(baseUrl, "");
-            Path filePath = Paths.get(baseDir, relative).toAbsolutePath().normalize();
+            Path baseRoot = Paths.get(baseDir).toAbsolutePath().normalize();
+            Path filePath = baseRoot.resolve(relative.startsWith("/") ? relative.substring(1) : relative).normalize();
+            if (!filePath.startsWith(baseRoot)) {
+                log.warn("Path traversal attempted in deleteFile: [{}]", fileUrl);
+                return;
+            }
             Files.deleteIfExists(filePath);
             log.info("Deleted local file: {}", filePath);
         } catch (Exception e) {

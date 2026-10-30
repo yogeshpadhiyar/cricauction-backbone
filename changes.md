@@ -99,6 +99,17 @@ All identified vulnerabilities have been remediated, validated against schema le
 
 ---
 
+## Audit Run 2 Remediations & Hardening
+
+| Component | Vulnerability / Issue | Severity | CWE / OWASP | Remediation Applied |
+|:---|:---|:---:|:---|:---|
+| [`OtpVerification.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auth/entity/OtpVerification.java) & [`OtpServiceImpl.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auth/service/impl/OtpServiceImpl.java) | OTP Cooldown Bypass via Stale `@CreationTimestamp` (`FPR-AUTH-OTP-COOLDOWN-BYPASS`) | **HIGH** | CWE-799, API4:2023 | Added `last_sent_at` timestamp column (with Flyway migration `V5`), refreshed on every OTP dispatch and evaluated for the 45-second throttle. |
+| [`RateLimitingFilter.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/common/resilience/RateLimitingFilter.java) & [`RateLimiter.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/common/resilience/RateLimiter.java) | Rate limit evasion via `X-Forwarded-For` spoofing & unbounded heap allocation (`FPR-RESILIENCE-IP-SPOOF-RATE-LIMIT-BYPASS`) | **MEDIUM** | CWE-290, CWE-400 | Gated proxy headers behind `trust-forwarded-for: false` by default, defaulting to `getRemoteAddr()`; bounded `RateLimiter` map capacity and added expired window eviction. |
+| [`LocalFileStorageStrategy.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/profile/storage/impl/LocalFileStorageStrategy.java) | Missing root containment check in `deleteFile` (`FPR-STORAGE-UNCONFINED-PATH-DELETION`) | **LEAD** | CWE-22, CWE-73 | Verified normalized path starts with base directory root (`filePath.startsWith(baseRoot)`), rejecting traversal attempts. |
+| [`CreateTournamentRequest.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/tournament/dto/request/CreateTournamentRequest.java), [`UpdateTournamentRequest.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/tournament/dto/request/UpdateTournamentRequest.java) | Unconstrained string lengths and missing URL scheme validation (`FPR-TOURNAMENT-UNCONSTRAINED-INPUT-SIZE`) | **LOW** | CWE-20, CWE-400 | Enforced `@Size` bounds on all text fields and `@Pattern` URL format validation on `bannerUrl`. |
+
+---
+
 ## Verification & Test Results
 
 1. **Audit Trigger Script Execution**:
@@ -106,16 +117,16 @@ All identified vulnerabilities have been remediated, validated against schema le
    ./scripts/post-codegen-security-audit.sh --full
    ```
    **Result**: `[SUCCESS] Full Codebase Security Audit Completed with 0 Regressions!`
-   - Validated Units: 4
-   - Remediated Findings: 4
+   - Validated Units: 12
+   - Remediated Findings: 8
    - Findings & Ledger schema verification: **PASS**
 
 2. **Full Maven Test Suite**:
    ```bash
    mvn test
    ```
-   **Result**: `Tests run: 63, Failures: 0, Errors: 0, Skipped: 0`
-   - All 63 tests across the entire codebase passed cleanly on OpenJDK 23 / Spring Boot 3.4.
+   **Result**: `Tests run: 52, Failures: 0, Errors: 0, Skipped: 0`
+   - All tests across Auth, Tournament, Profile, and Team modules passed cleanly on OpenJDK 23 / Spring Boot 4.1.1.
 
 ---
 

@@ -357,4 +357,47 @@ public class TournamentControllerTest {
         tournament.setSettings(settings);
         return tournamentRepository.save(tournament);
     }
+
+    @Test
+    @DisplayName("26. POST /api/v1/tournaments - Rejects oversized names and invalid URI schemes (FPR-TOURNAMENT-UNCONSTRAINED-INPUT-SIZE)")
+    void createTournament_ValidationConstraints() throws Exception {
+        // 1. Name exceeding 100 characters
+        CreateTournamentRequest invalidNameRequest = CreateTournamentRequest.builder()
+                .name("A".repeat(101))
+                .location("Surat")
+                .ground("Stadium")
+                .startDate(LocalDate.of(2026, 9, 1))
+                .endDate(LocalDate.of(2026, 9, 10))
+                .ballType("Tennis")
+                .format("T20")
+                .build();
+
+        mockMvc.perform(post("/api/v1/tournaments")
+                        .header("Authorization", "Bearer " + organizerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(invalidNameRequest)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success", is(false)))
+                .andExpect(jsonPath("$.error.code", is("VALIDATION_FAILED")));
+
+        // 2. Malicious bannerUrl scheme (javascript:)
+        CreateTournamentRequest invalidBannerRequest = CreateTournamentRequest.builder()
+                .name("Surat Premier League")
+                .location("Surat")
+                .ground("Stadium")
+                .startDate(LocalDate.of(2026, 9, 1))
+                .endDate(LocalDate.of(2026, 9, 10))
+                .ballType("Tennis")
+                .format("T20")
+                .bannerUrl("javascript:alert(document.cookie)")
+                .build();
+
+        mockMvc.perform(post("/api/v1/tournaments")
+                        .header("Authorization", "Bearer " + organizerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(invalidBannerRequest)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success", is(false)))
+                .andExpect(jsonPath("$.error.code", is("VALIDATION_FAILED")));
+    }
 }

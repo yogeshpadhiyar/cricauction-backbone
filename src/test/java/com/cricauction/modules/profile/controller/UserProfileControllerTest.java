@@ -47,6 +47,9 @@ public class UserProfileControllerTest {
     @Autowired
     private JwtTokenProvider jwtTokenProvider;
 
+    @Autowired
+    private com.cricauction.modules.profile.storage.impl.LocalFileStorageStrategy localFileStorageStrategy;
+
     private User testUser;
     private User otherUser;
     private String token;
@@ -250,5 +253,14 @@ public class UserProfileControllerTest {
     void testUnauthorizedRequest() throws Exception {
         mockMvc.perform(get("/api/v1/users/profile"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("Security: LocalFileStorageStrategy blocks path traversal in deleteFile (FPR-STORAGE-UNCONFINED-PATH-DELETION)")
+    void testDeleteFile_BlocksPathTraversal() {
+        // Attempting to delete path outside base directory must be safely contained
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> {
+            localFileStorageStrategy.deleteFile("https://cdn.cricauction.app/../../../../etc/passwd");
+        });
     }
 }

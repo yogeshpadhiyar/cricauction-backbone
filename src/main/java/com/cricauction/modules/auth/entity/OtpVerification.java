@@ -44,6 +44,9 @@ public class OtpVerification {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    @Column(name = "last_sent_at")
+    private Instant lastSentAt;
+
     @PrePersist
     @PreUpdate
     public void ensureIdentifier() {
@@ -53,6 +56,9 @@ public class OtpVerification {
             } else if (mobile != null && !mobile.isBlank()) {
                 identifier = mobile;
             }
+        }
+        if (lastSentAt == null) {
+            lastSentAt = Instant.now();
         }
     }
 

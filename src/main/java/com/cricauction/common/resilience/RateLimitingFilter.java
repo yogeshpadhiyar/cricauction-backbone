@@ -28,6 +28,9 @@ public class RateLimitingFilter extends OncePerRequestFilter {
     @Value("${cricauction.security.rate-limit.bypass-enabled:false}")
     private boolean bypassEnabled;
 
+    @Value("${cricauction.security.rate-limit.trust-forwarded-for:false}")
+    private boolean trustForwardedFor;
+
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
@@ -69,9 +72,11 @@ public class RateLimitingFilter extends OncePerRequestFilter {
     }
 
     private String getClientIp(HttpServletRequest request) {
-        String xfHeader = request.getHeader("X-Forwarded-For");
-        if (xfHeader != null && !xfHeader.isBlank()) {
-            return xfHeader.split(",")[0].trim();
+        if (trustForwardedFor) {
+            String xfHeader = request.getHeader("X-Forwarded-For");
+            if (xfHeader != null && !xfHeader.isBlank()) {
+                return xfHeader.split(",")[0].trim();
+            }
         }
         return request.getRemoteAddr() != null ? request.getRemoteAddr() : "127.0.0.1";
     }
