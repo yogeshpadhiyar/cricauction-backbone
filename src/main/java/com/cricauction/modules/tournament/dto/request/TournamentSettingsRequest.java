@@ -1,7 +1,6 @@
 package com.cricauction.modules.tournament.dto.request;
 
 import io.swagger.v3.oas.annotations.media.Schema;
-import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
@@ -17,7 +16,7 @@ import lombok.NoArgsConstructor;
 public class TournamentSettingsRequest {
 
     @Schema(example = "10")
-    @Min(value = 2, message = "Tournament must have at least 2 teams")
+    @Positive(message = "Teams must be a positive integer")
     private Integer teams;
 
     @Schema(example = "12")
@@ -37,11 +36,11 @@ public class TournamentSettingsRequest {
     private Long basePrice;
 
     @Schema(example = "10000")
-    @Positive(message = "Bid increment must be positive")
+    @PositiveOrZero(message = "Bid increment cannot be negative")
     private Long bidIncrement;
 
     @Schema(example = "10")
-    @Min(value = 5, message = "Bid timer must be at least 5 seconds")
+    @Positive(message = "Bid timer must be positive")
     private Integer bidTimer;
 
     @Schema(example = "false")
@@ -65,4 +64,8 @@ public class TournamentSettingsRequest {
     @Schema(example = "ORGANIZER_APPROVAL", description = "Captain approval behavior: ORGANIZER_APPROVAL (default, organizer manually approves applicants) or AUTO (auto-approve upon registration)")
     @Size(max = 30, message = "Captain approval mode cannot exceed 30 characters")
     private String captainApprovalMode;
+
+    @Schema(example = "ORGANIZER_APPROVAL", description = "Player approval behavior: ORGANIZER_APPROVAL (default, organizer manually approves applicants) or AUTO_APPROVAL (auto-approve upon registration)")
+    @Size(max = 30, message = "Player approval mode cannot exceed 30 characters")
+    private String playerApprovalMode;
 }

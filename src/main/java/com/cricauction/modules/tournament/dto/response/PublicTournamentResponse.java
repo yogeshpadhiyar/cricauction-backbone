@@ -1,7 +1,6 @@
 package com.cricauction.modules.tournament.dto.response;
 
 import com.cricauction.modules.tournament.entity.Tournament;
-import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -13,7 +12,6 @@ import java.time.LocalDate;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@JsonInclude(JsonInclude.Include.NON_NULL)
 public class PublicTournamentResponse {
     private String id;
     private String name;
@@ -27,11 +25,13 @@ public class PublicTournamentResponse {
     private String auctionDate;
     private String captainRegistrationMode;
     private String captainApprovalMode;
+    private String playerApprovalMode;
 
     public static PublicTournamentResponse fromEntity(Tournament tournament, int registeredCount) {
         int capacity = 150;
         String capMode = "INVITE_ONLY";
         String appMode = "ORGANIZER_APPROVAL";
+        String plyAppMode = "ORGANIZER_APPROVAL";
         if (tournament.getSettings() != null) {
             capacity = tournament.getSettings().getTotalTeams() * tournament.getSettings().getSquadMaximum();
             if (tournament.getSettings().getCaptainRegistrationMode() != null) {
@@ -39,6 +39,9 @@ public class PublicTournamentResponse {
             }
             if (tournament.getSettings().getCaptainApprovalMode() != null) {
                 appMode = tournament.getSettings().getCaptainApprovalMode();
+            }
+            if (tournament.getSettings().getPlayerApprovalMode() != null) {
+                plyAppMode = tournament.getSettings().getPlayerApprovalMode();
             }
         }
 
@@ -73,6 +76,7 @@ public class PublicTournamentResponse {
                 .auctionDate(auctionDateIso)
                 .captainRegistrationMode(capMode)
                 .captainApprovalMode(appMode)
+                .playerApprovalMode(plyAppMode)
                 .build();
     }
 }

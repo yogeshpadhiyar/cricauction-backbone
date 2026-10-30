@@ -170,7 +170,7 @@ public class TournamentServiceImpl implements TournamentService {
             tournament.setAuctionDate(request.getAuctionDate());
         }
         if (request.getAuctionTime() != null) {
-            tournament.setAuctionTime(request.getAuctionTime().trim());
+            tournament.setAuctionTime(request.getAuctionTime());
         }
         if (request.getRegistrationStartDate() != null) {
             tournament.setRegistrationStartDate(request.getRegistrationStartDate());
@@ -178,25 +178,30 @@ public class TournamentServiceImpl implements TournamentService {
         if (request.getRegistrationEndDate() != null) {
             tournament.setRegistrationEndDate(request.getRegistrationEndDate());
         }
+        if (tournament.getRegistrationStartDate() != null && tournament.getRegistrationEndDate() != null) {
+            if (tournament.getRegistrationEndDate().isBefore(tournament.getRegistrationStartDate())) {
+                throw new BadRequestException("INVALID_REGISTRATION_DATES", "Registration end date cannot be earlier than start date.");
+            }
+        }
         if (request.getBallType() != null && !request.getBallType().isBlank()) {
             tournament.setBallType(request.getBallType().trim());
         }
         if (request.getFormat() != null && !request.getFormat().isBlank()) {
             tournament.setFormat(request.getFormat().trim());
         }
-        if (request.getEntryFee() != null) {
+        if (request.getEntryFee() != null && !request.getEntryFee().isBlank()) {
             tournament.setEntryFee(request.getEntryFee().trim());
         }
         if (request.getDescription() != null) {
-            tournament.setDescription(request.getDescription().trim());
+            tournament.setDescription(request.getDescription());
         }
         if (request.getBannerUrl() != null) {
-            tournament.setBannerUrl(request.getBannerUrl().trim());
+            tournament.setBannerUrl(request.getBannerUrl());
         }
 
         // 2. Micro-Write Phase on MASTER DB
         Tournament updated = tournamentPersistenceService.saveTournament(tournament);
-        publicTournamentCache.remove(updated.getSlug());
+        publicTournamentCache.remove(tournament.getSlug());
 
         log.info("Tournament [{}] details updated by Organizer [{}]", updated.getPublicId(), currentUser.getId());
         return TournamentDetailResponse.fromEntity(updated);
@@ -263,6 +268,14 @@ public class TournamentServiceImpl implements TournamentService {
                 settings.setCaptainApprovalMode("AUTO");
             } else {
                 settings.setCaptainApprovalMode("ORGANIZER_APPROVAL");
+            }
+        }
+        if (request.getPlayerApprovalMode() != null && !request.getPlayerApprovalMode().isBlank()) {
+            String pMode = request.getPlayerApprovalMode().trim().toUpperCase(Locale.ENGLISH);
+            if ("AUTO".equals(pMode) || "AUTO_APPROVAL".equals(pMode)) {
+                settings.setPlayerApprovalMode("AUTO_APPROVAL");
+            } else {
+                settings.setPlayerApprovalMode("ORGANIZER_APPROVAL");
             }
         }
 

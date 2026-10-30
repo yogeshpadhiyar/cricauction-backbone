@@ -62,7 +62,7 @@ public class TournamentQueryService {
     }
 
     public TournamentSettings findSettingsByTournamentId(Long tournamentId) {
-        return settingsRepository.findByTournamentId(tournamentId).orElse(null);
+        return settingsRepository.findById(tournamentId).orElse(null);
     }
 
     public List<TournamentSummaryResponse> getOrganizerTournaments(UserPrincipal currentUser, String status) {

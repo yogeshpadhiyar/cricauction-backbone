@@ -77,6 +77,14 @@ public class TournamentSettings {
     @Builder.Default
     private String captainApprovalMode = "ORGANIZER_APPROVAL";
 
+    @Column(name = "player_approval_mode", nullable = false)
+    @Builder.Default
+    private String playerApprovalMode = "ORGANIZER_APPROVAL";
+
+    @Column(name = "registered_players_count", nullable = false)
+    @Builder.Default
+    private int registeredPlayersCount = 0;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;

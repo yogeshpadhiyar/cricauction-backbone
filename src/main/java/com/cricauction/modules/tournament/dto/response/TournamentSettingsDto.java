@@ -24,6 +24,7 @@ public class TournamentSettingsDto {
     private boolean allowPlayersToWithdraw;
     private String captainRegistrationMode;
     private String captainApprovalMode;
+    private String playerApprovalMode;
 
     public static TournamentSettingsDto fromEntity(TournamentSettings entity) {
         if (entity == null) {
@@ -43,6 +44,7 @@ public class TournamentSettingsDto {
                 .allowPlayersToWithdraw(entity.isAllowPlayersToWithdraw())
                 .captainRegistrationMode(entity.getCaptainRegistrationMode() != null ? entity.getCaptainRegistrationMode() : "INVITE_ONLY")
                 .captainApprovalMode(entity.getCaptainApprovalMode() != null ? entity.getCaptainApprovalMode() : "ORGANIZER_APPROVAL")
+                .playerApprovalMode(entity.getPlayerApprovalMode() != null ? entity.getPlayerApprovalMode() : "ORGANIZER_APPROVAL")
                 .build();
     }
 }

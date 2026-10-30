@@ -133,8 +133,58 @@ All identified vulnerabilities have been remediated, validated against schema le
    ```bash
    mvn test
    ```
-   **Result**: `Tests run: 52, Failures: 0, Errors: 0, Skipped: 0`
-   - All tests across Auth, Tournament, Profile, and Team modules passed cleanly on OpenJDK 23 / Spring Boot 4.1.1.
+   **Result**: `Tests run: 113, Failures: 0, Errors: 0, Skipped: 0`
+   - All tests across Auth, Tournament, Profile, Team, and Player Registration modules passed cleanly on OpenJDK 23 / Spring Boot 4.1.1.
+
+---
+
+## Module 6: Player Registration & Capacity Management (APIs 34–40)
+
+Implemented end-to-end player enrollment, capacity tracking, approval workflows, base price customization, and withdrawal handling:
+- **API 34**: `POST /api/v1/tournaments/{tournamentId}/players/register` — Player registration with dynamic base price inheritance and atomic capacity checks.
+- **API 35**: `GET /api/v1/tournaments/{tournamentId}/players/my-status` — Player registration status tracking and auction journey.
+- **API 36**: `DELETE /api/v1/tournaments/{tournamentId}/players/withdraw` — Player voluntary registration withdrawal with atomic capacity decrement.
+- **API 37**: `GET /api/v1/tournaments/{tournamentId}/players` — Organizer player directory with filtered pagination, search, and role breakdown.
+- **API 38**: `GET /api/v1/tournaments/{tournamentId}/players/stats` — Real-time registration capacity and role breakdown statistics.
+- **API 39**: `PATCH /api/v1/tournaments/{tournamentId}/players/{playerId}/status` — Organizer vetting, approval, and rejection workflow.
+- **API 40**: `PATCH /api/v1/tournaments/{tournamentId}/players/{playerId}/base-price` — Organizer custom base price adjustment.
+
+---
+
+## Module 6 Ponytail Review Remediations (All 6 Issues Resolved)
+
+| Ref # | Component / File | Issue Identified | Remediation Applied |
+|:---|:---|:---|:---|
+| **PT-REV-1** | [`PlayerPersistenceService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/player/service/PlayerPersistenceService.java) | Double rollback decrement on registration failure | Removed explicit catch block rollback decrement call; relying cleanly on `@Transactional` rollback to undo the slot increment. |
+| **PT-REV-2** | [`PlayerPersistenceService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/player/service/PlayerPersistenceService.java) | Rejecting a player doesn't free slot; restoring doesn't check capacity | Atomically decrements `registered_players_count` when moving an active player to `"Rejected"`; verifies capacity and atomically increments slot when restoring a rejected player. |
+| **PT-REV-3** | [`PlayerQueryService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/player/service/PlayerQueryService.java), [`TournamentPlayerRepository.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/player/repository/TournamentPlayerRepository.java) | Role filtering brittle to hyphen vs space | Added `REPLACE(..., '-', ' ')` normalization in repository query and service to match "Wicket-Keeper" and "All-Rounder" regardless of separator. |
+| **PT-REV-4** | [`PlayerQueryService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/player/service/PlayerQueryService.java) | Null base price could cause NPE in `String.format` | Formatted base price null-safely: `tp.getBasePrice() != null ? "₹" + String.format(Locale.US, "%,d", tp.getBasePrice()) : "₹0"`. |
+| **PT-REV-5** | [`PlayerQueryService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/player/service/PlayerQueryService.java) | Phantom `TournamentSettings` fallback masks unconfigured tournament | Removed unsaved dummy object fallback; now throws `ResourceNotFoundException("SETTINGS_NOT_FOUND")` when tournament settings do not exist. |
+| **PT-REV-6** | [`TournamentSettingsRepository.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/tournament/repository/TournamentSettingsRepository.java) | Redundant `findByTournamentId` when PK is `tournamentId` | Removed redundant method and replaced calls with standard Spring Data `findById(tournamentId)`. |
+
+---
+
+## Module 6 Security Audit & Remediations (5 Vulnerabilities Fixed)
+
+| Ref # | Component / File | Vulnerability / Threat | Severity | CWE / OWASP | Defensive Remediation Applied |
+|:---|:---|:---|:---:|:---|:---|
+| **SEC-MOD6-01** | [`PlayerPersistenceService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/player/service/PlayerPersistenceService.java#L103) | Double slot decrement on rejected player voluntary withdrawal | **HIGH** | CWE-840, API4:2023 | Guarded slot decrement in `executeWithdraw` with `!"Rejected".equalsIgnoreCase(player.getStatus())`, preventing artificial capacity slot deflation. |
+| **SEC-MOD6-02** | [`UpdatePlayerStatusRequest.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/player/dto/request/UpdatePlayerStatusRequest.java#L17), [`PlayerPersistenceService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/player/service/PlayerPersistenceService.java#L113) | State machine bypass & auction integrity tampering | **HIGH** | CWE-20, CWE-840, API8:2023 | Enforced status allowlist pattern (`Registered|Approved|Rejected|Pending`) on DTO; blocked status mutation on `"Sold"` players in persistence layer. |
+| **SEC-MOD6-03** | [`PlayerRegistrationController.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/player/controller/PlayerRegistrationController.java#L93), [`PlayerQueryService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/player/service/PlayerQueryService.java#L107) | Unbounded pagination limit causing heap exhaustion DoS | **MEDIUM** | CWE-770, CWE-400, API4:2023 | Added `@Min(1) @Max(100)` validation on `limit`, `@Min(1)` on `page`, and defensive service-level ceiling `Math.min(limit, 100)`. |
+| **SEC-MOD6-04** | [`PlayerRegistrationRequest.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/player/dto/request/PlayerRegistrationRequest.java#L40) | Stored XSS via CricHeroes link protocol injection | **MEDIUM** | CWE-79, CWE-20, API3:2023 | Added `@Pattern(regexp = "^(https?://.*)?$")` to restrict links strictly to valid HTTP/HTTPS protocol schemes. |
+| **SEC-MOD6-05** | [`PlayerQueryService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/player/service/PlayerQueryService.java#L48-L52) | Player registration permitted on `ONGOING` tournaments | **MEDIUM** | CWE-840, API5:2023 | Added `tournament.getStatus() == TournamentStatus.ONGOING` to the registration closed check, ensuring post-auction enrollment integrity. |
+
+---
+
+## Module 6 Ponytail Review (Round 2 — All 5 Issues Resolved)
+
+| Ref # | Component / File | Issue Identified | Remediation Applied |
+|:---|:---|:---|:---|
+| **PT-REV2-1** | [`PlayerQueryService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/player/service/PlayerQueryService.java#L180-L195) | Role breakdown stats dropped alternate role spacings/hyphens | Normalized aggregation keys with `replaceAll("[-_ ]", "")` and merged counts into `"allrounder"` and `"wicketkeeper"`. |
+| **PT-REV2-2** | [`PlayerQueryService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/player/service/PlayerQueryService.java#L175-L178) | `totalEnrolled` excluded `"Sold"` and auctioned players | Calculated `totalEnrolled` as all non-rejected players (`!e.getKey().equalsIgnoreCase("rejected")`), keeping capacity stats accurate post-auction. |
+| **PT-REV2-3** | [`PlayerRegistrationServiceImpl.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/player/service/impl/PlayerRegistrationServiceImpl.java#L70-L75), [`PlayerPersistenceService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/player/service/PlayerPersistenceService.java#L94-L105) | Withdrawal threw "Registration Closed" on ongoing tournaments | Removed call to `findTournamentForRegistration` from withdrawal flow; made `executeWithdraw` self-contained using `player.getTournament().getId()`. |
+| **PT-REV2-4** | [`PlayerRegistrationServiceImpl.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/player/service/impl/PlayerRegistrationServiceImpl.java#L82-L86), [`PlayerQueryService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/player/service/PlayerQueryService.java#L107) | Duplicate tournament DB lookup on player directory query | Passed the `Tournament` entity returned by `validateTournamentOwnership` directly into `listTournamentPlayers`, eliminating redundant DB query. |
+| **PT-REV2-5** | [`PlayerPersistenceService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/player/service/PlayerPersistenceService.java#L32-L38) | Redundant duplicate ID parameters in `executeRegisterPlayer` | Removed redundant `tournamentId` and `userId` arguments from method signature and used `tournament.getId()` and `user.getId()`. |
 
 ---
 
