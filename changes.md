@@ -303,3 +303,35 @@ Implemented end-to-end player enrollment, capacity tracking, approval workflows,
 | **PT-MOD3-07** | [`DashboardController.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/dashboard/controller/DashboardController.java) | Missing `@Validated` class annotation | Added `@Validated` to `DashboardController` in alignment with project standards. |
 | **PT-MOD3-08** | [`DashboardFormatter.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/dashboard/util/DashboardFormatter.java) | Unused `Instant` formatting methods | Deleted unused `formatAuctionDateTime(Instant)` and `formatAuctionDateOnly(Instant)` methods. |
 
+---
+
+## Module 9 Notifications & Push Alerts Implementation & Ponytail Review Fixes
+
+### Deliverables & Architecture
+- **Enterprise REST Endpoints (APIs 59, 60, 61, 62)**:
+  - `GET /api/v1/notifications` (API 59): Lists user's notifications ordered by `created_at DESC`, capped cleanly at top 50 to prevent unbounded heap allocation.
+  - `PATCH /api/v1/notifications/{id}/read` (API 60): Marks individual notification as read with strict tenant isolation.
+  - `POST /api/v1/notifications/read-all` (API 61): Marks all unread notifications as read via indexed bulk micro-write.
+  - `POST /api/v1/notifications/device-token` (API 62): Registers or updates mobile device push tokens idempotently using atomic SQL UPSERT.
+- **Strategy 1 ("Read-Before-Write")**:
+  - Notification inbox queries routed exclusively to `CricAuction-Replica-Pool` via `@Transactional(readOnly = true)`.
+- **Atomic UPSERT with Fallback**:
+  - Uses direct `INSERT ... ON CONFLICT (device_token) DO UPDATE` with catch fallback to H2 `MERGE INTO`, eliminating connection pool borrows and database metadata inspections.
+- **Asynchronous, Non-Blocking Push Dispatcher**:
+  - [`PushNotificationDispatcher.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/notification/service/PushNotificationDispatcher.java) dispatches FCM/APNS notifications asynchronously via `@Async`, masking sensitive device push tokens in application logs.
+- **Database Schema & Migrations**:
+  - Added Flyway migration `V13__create_notifications_and_device_tokens_schema.sql` creating `notifications` and `device_push_tokens` tables with composite and filtered indexes (`idx_notif_user_unread`, `idx_push_user_active`).
+- **High-Concurrency Benchmark**:
+  - 5,000 virtual-thread operations on live PostgreSQL 18 database completed with 100.00% success rate (6,024.10 ops/sec).
+
+### Ponytail Review Fixes Applied:
+| Ref # | Component / File | Issue Identified | Remediation Applied |
+|:---|:---|:---|:---|
+| **PT-MOD9-01** | [`NotificationRepository.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/notification/repository/NotificationRepository.java), [`NotificationQueryService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/notification/service/NotificationQueryService.java) | Unbounded query `findByUserIdOrderByCreatedAtDesc` | Replaced unbounded query with `findTop50ByUserIdOrderByCreatedAtDesc`, bounding memory consumption under heavy user inboxes. |
+| **PT-MOD9-02** | [`NotificationRepository.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/notification/repository/NotificationRepository.java), [`NotificationQueryService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/notification/service/NotificationQueryService.java) | Unused speculative repository query methods and uncalled service helper | Deleted `findByUserIdAndIsReadFalseOrderByCreatedAtDesc`, `findByPublicIdAndUserId`, and `getUnreadCount(Long userId)`. |
+| **PT-MOD9-03** | [`RegisterDeviceTokenRequest.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/notification/dto/request/RegisterDeviceTokenRequest.java), [`DevicePlatform.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/notification/entity/enums/DevicePlatform.java) | Silent defaulting of invalid platforms to `ANDROID` | Added `@Pattern(regexp = "(?i)^(ios|android|web)$")` annotation to fail fast with 400 Bad Request, and updated `DevicePlatform.fromString` to throw `IllegalArgumentException` on unsupported input. |
+| **PT-MOD9-04** | [`NotificationPersistenceService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/notification/service/NotificationPersistenceService.java) | Blocking connection pool borrow in `isPostgreSQL()` | Removed `isPostgres` and connection checkout; replaced with clean `try { ... PostgreSQL UPSERT ... } catch (BadSqlGrammarException) { ... H2 MERGE ... }` fallback. |
+| **PT-MOD9-05** | [`PushNotificationDispatcher.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/notification/service/PushNotificationDispatcher.java) | Raw device push tokens exposed in application log output | Added `maskToken` method to mask tokens (`fcm_to...123`) before writing to logs, preventing sensitive token leakage. |
+| **PT-MOD9-06** | [`NotificationControllerTest.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/test/java/com/cricauction/modules/notification/controller/NotificationControllerTest.java) | Missing regression test coverage for top 50 capping and invalid platform rejection | Added `registerDeviceToken_invalidPlatform_returns400` and `listNotifications_capsAtTop50` regression test cases. |
+
+
