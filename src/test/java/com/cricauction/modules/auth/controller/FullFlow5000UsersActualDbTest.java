@@ -150,7 +150,7 @@ public class FullFlow5000UsersActualDbTest {
         String baseName = CRICKETER_NAMES[index % CRICKETER_NAMES.length];
         String fullName = baseName + " #" + index;
         String email = String.format("player_%d_%05d@cricauction.in", runPrefix, index);
-        String mobile = String.format("+919%02d%06d", (int)(runPrefix % 90 + 10), index);
+        String mobile = String.format("+919%09d", Math.abs((runPrefix * 5003L + index) % 1_000_000_000L));
         String city = CITIES[index % CITIES.length];
 
         int journeyType = index % 4;

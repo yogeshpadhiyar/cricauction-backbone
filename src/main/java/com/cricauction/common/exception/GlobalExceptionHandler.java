@@ -17,7 +17,9 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -63,6 +65,31 @@ public class GlobalExceptionHandler {
         log.warn("Constraint violation failed for request: {}", details);
         ApiError error = ApiError.of("VALIDATION_FAILED", "One or more validation constraints failed", details);
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.error(error));
+    }
+
+    @ExceptionHandler(HandlerMethodValidationException.class)
+    public ResponseEntity<ApiResponse<Void>> handleHandlerMethodValidationException(HandlerMethodValidationException ex) {
+        List<ErrorDetail> details = new ArrayList<>();
+        ex.getParameterValidationResults().forEach(result -> {
+            String paramName = result.getMethodParameter().getParameterName();
+            result.getResolvableErrors().forEach(error -> {
+                details.add(ErrorDetail.builder()
+                        .field(paramName != null ? paramName : "parameter")
+                        .issue(error.getDefaultMessage())
+                        .build());
+            });
+        });
+
+        log.warn("Handler method validation failed for request: {}", details);
+        ApiError error = ApiError.of("VALIDATION_FAILED", "One or more validation constraints failed", details);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.error(error));
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleNoResourceFound(NoResourceFoundException ex) {
+        log.warn("Resource not found: {}", ex.getResourcePath());
+        ApiError error = ApiError.of("NOT_FOUND", "Resource not found: " + ex.getResourcePath());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.error(error));
     }
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)

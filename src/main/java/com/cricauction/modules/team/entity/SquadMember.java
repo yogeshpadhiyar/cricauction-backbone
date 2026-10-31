@@ -11,7 +11,8 @@ import java.time.Instant;
         name = "squad_members",
         indexes = {
                 @Index(name = "idx_squad_members_team", columnList = "team_id"),
-                @Index(name = "idx_squad_members_user", columnList = "player_user_id")
+                @Index(name = "idx_squad_members_user", columnList = "player_user_id"),
+                @Index(name = "idx_squad_members_tourn_player", columnList = "tournament_player_id")
         }
 )
 @Getter
@@ -28,6 +29,9 @@ public class SquadMember {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "team_id", nullable = false)
     private Team team;
+
+    @Column(name = "tournament_player_id")
+    private Long tournamentPlayerId;
 
     @Column(name = "player_user_id")
     private Long playerUserId;

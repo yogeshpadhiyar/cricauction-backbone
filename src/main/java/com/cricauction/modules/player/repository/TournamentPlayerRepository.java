@@ -26,6 +26,12 @@ public interface TournamentPlayerRepository extends JpaRepository<TournamentPlay
     @Query("SELECT COUNT(tp) FROM TournamentPlayer tp WHERE tp.tournament.id = :tournamentId")
     long countByTournamentId(@Param("tournamentId") Long tournamentId);
 
+    long countByTournamentIdAndStatusIgnoreCase(Long tournamentId, String status);
+
+    List<TournamentPlayer> findByTournamentIdAndStatusIgnoreCase(Long tournamentId, String status);
+
+    Optional<TournamentPlayer> findFirstByTournamentIdAndStatusIgnoreCaseOrderByIdAsc(Long tournamentId, String status);
+
     @Query("SELECT tp FROM TournamentPlayer tp " +
            "WHERE tp.tournament.id = :tournamentId " +
            "AND (:status IS NULL OR LOWER(tp.status) = LOWER(:status)) " +

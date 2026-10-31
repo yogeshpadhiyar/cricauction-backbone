@@ -9,6 +9,7 @@ public enum TournamentStatus {
     DRAFT("draft"),
     PUBLISHED("published"),
     UPCOMING("upcoming"),
+    AUCTION_LIVE("auction_live"),
     ONGOING("ongoing"),
     COMPLETED("completed"),
     ARCHIVED("archived");

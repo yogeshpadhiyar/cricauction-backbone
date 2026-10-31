@@ -24,4 +24,7 @@ public interface SquadMemberRepository extends JpaRepository<SquadMember, Long> 
     @Query("SELECT sm.team.id AS teamId, COUNT(sm.id) AS squadCount " +
            "FROM SquadMember sm WHERE sm.team.id IN :teamIds GROUP BY sm.team.id")
     List<TeamSquadCountProjection> countSquadMembersByTeamIds(@Param("teamIds") Collection<Long> teamIds);
+
+    @Query("SELECT sm FROM SquadMember sm JOIN FETCH sm.team t WHERE t.tournament.id = :tournamentId AND sm.purchasePrice > 0 ORDER BY sm.id ASC")
+    List<SquadMember> findSoldSquadMembersByTournamentId(@Param("tournamentId") Long tournamentId);
 }

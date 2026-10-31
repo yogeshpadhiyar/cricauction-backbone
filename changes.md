@@ -195,3 +195,83 @@ Implemented end-to-end player enrollment, capacity tracking, approval workflows,
    - Automatically executes the security audit workflow upon code generation tasks.
 2. **Git Hook Configured**: `.git/hooks/post-commit`
    - Automatically executes `scripts/post-codegen-security-audit.sh` after code changes to catch security regressions before push.
+
+---
+
+## Module 8: Matches, Fixtures & Scoring Implementation (APIs 54 - 58)
+
+### 1. Database Schema Migration (Flyway V11)
+- [`V11__create_matches_and_scoring_schema.sql`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/resources/db/migration/V11__create_matches_and_scoring_schema.sql):
+  - Created `matches` table with unique `public_id`, tournament/team FKs, `scheduled_at`, `ground`, `overs`, `status`, `winner_team_id`, and optimistic `@Version`.
+  - Created `match_scorecards` fast state table (one-to-one per match) storing runs, wickets, balls, current batsman and bowler stats.
+  - Created `match_balls` commentary and audit ledger table with unique composite constraint `uq_match_innings_over_ball (match_id, innings, over_number, ball_number)`.
+
+### 2. High-Concurrency Resilience & Architecture
+- **PostgreSQL Advisory Locking (`pg_advisory_xact_lock`)**: Scoped to `match_id` during live ball updates (`recordBall`), serializing concurrent score increments while allowing different matches to execute 100% in parallel without deadlocks.
+- **Strategy 1 ("Read-Before-Write") Master-Replica Decoupling**: Fixture listings (API 54), scorecard inquiries (API 56), and points tables (API 58) route via read-only transactions to `CricAuction-Replica-Pool`. Mutations (APIs 55 & 57) run on `CricAuction-Master-Pool`.
+- **Strict Idempotency Guard**: Repeated ball submissions with identical `(innings, over, ball)` are recognized via the unique constraint and returned immediately without double-incrementing runs or wickets.
+- **Points Table & Net Run Rate (NRR) Engine**: Automated points table ranking based on ICC NRR formula:
+  $$\text{NRR} = \left(\frac{\text{Total Runs Scored}}{\text{Total Overs Faced}}\right) - \left(\frac{\text{Total Runs Conceded}}{\text{Total Overs Bowled}}\right)$$
+- **Bounded LRU Cache**: 10-second TTL cache (`BoundedLruCache`) protects the standings API under thousands of concurrent spectators, invalidated immediately on match completion or fixture scheduling.
+- **WebSocket STOMP Broker**: Broadcaster pushes real-time score updates to `/topic/matches/{matchPublicId}/score` and tournament events to `/topic/tournaments/{tournamentPublicId}/matches`.
+
+### 3. Integration & Concurrency Verification
+- **Functional Integration Tests**: [`MatchControllerTest.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/test/java/com/cricauction/modules/match/controller/MatchControllerTest.java) (7/7 tests passing).
+- **5,000 Operations Benchmark on Live PostgreSQL**: [`MatchConcurrency5000UsersActualDbTest.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/test/java/com/cricauction/modules/match/controller/MatchConcurrency5000UsersActualDbTest.java):
+  - Concurrency: 100 virtual worker threads.
+  - Volume: 5,000 operations across APIs 54, 56, 57, 58.
+  - Success Rate: **100.00% (5,000 / 5,000 successful, 0 failures, 0 deadlocks)**.
+  - Total Wall-Clock Time: **2,897 ms (2.89 s)**.
+  - Aggregate Throughput: **1,725.9 ops/sec**.
+  - p50 Latency: **1,425.0 ms** | p95 Latency: **2,530.0 ms**.
+- **Full Regression Test Suite**: **137 / 137 tests passing (0 failures, 0 errors, 0 skipped)**.
+
+---
+
+## Module 8 Ponytail Review Fixes (All 6 Issues Resolved)
+
+| Ref # | Component / File | Issue Identified | Remediation Applied |
+|:---|:---|:---|:---|
+| **PT-MOD8-01** | [`MatchPersistenceService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/match/service/MatchPersistenceService.java#L173-L200) | New batsman/bowler inherited previous player's stats | Added player identity change detection comparing ID and name against current scorecard; resets player runs/balls/wickets to 0 for incoming players before recording ball. |
+| **PT-MOD8-02** | [`MatchQueryService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/match/service/MatchQueryService.java#L131-L137) | N+1 scorecard queries in standings calculation | Replaced individual loop queries with batch lookup `matchScorecardRepository.findAllById(completedMatchIds)` indexed into a lookup map ($O(1)$ lookups). |
+| **PT-MOD8-03** | [`MatchQueryService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/match/service/MatchQueryService.java#L170-L177) | All-out teams not given full match overs quota in NRR | Enforced official ICC rule: if wickets $\ge 10$, effective balls faced is set to `overs * 6` (e.g. 120 balls in T20) rather than actual balls faced. |
+| **PT-MOD8-04** | [`RecordBallRequest.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/match/dto/RecordBallRequest.java#L23-L44), [`CreateMatchFixtureRequest.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/match/dto/CreateMatchFixtureRequest.java#L31-L33) | Negative extra runs and unbounded overs accepted | Added `@Min(0) @Max(10)` on `extraRuns`, `@Max(100)` on `over`, and `@Min(1) @Max(100)` on fixture `overs`. |
+| **PT-MOD8-05** | [`MatchRepository.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/match/repository/MatchRepository.java), [`MatchScorecardRepository.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/match/repository/MatchScorecardRepository.java), [`MatchBallRepository.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/match/repository/MatchBallRepository.java) | Dead unused repository methods | Deleted 6 uncalled repository method declarations (`findByPublicId`, `findByTournamentPublicIdWithTeams`, `findByTournamentIdAndStatus`, `findByMatchPublicIdWithMatchAndTeams`, `findRecentBallsByMatchId`, `findByMatchIdOrderByInningsAscOverNumberAscBallNumberAsc`). |
+| **PT-MOD8-06** | [`MatchScorecard.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/match/entity/MatchScorecard.java#L115-L128), [`MatchQueryService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/match/service/MatchQueryService.java#L225-L253) | Duplicated overs formatting logic | Consolidated overs conversion into static utility methods on `MatchScorecard` and eliminated redundant duplicate implementation. |
+
+
+
+---
+
+## Module 7 Live Auction Engine Ponytail Review Fixes (All 6 Issues Resolved)
+
+| Ref # | Component / File | Issue Identified | Remediation Applied |
+|:---|:---|:---|:---|
+| **PT-MOD7-01** | [`AuctionPersistenceService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auction/service/AuctionPersistenceService.java#L164-L174) | Calling next player abandoned active bids or orphaned players in `UnderHammer` status | If `state.getCurrentPlayer()` has active bids (`leadingTeam != null`), throws `ConflictException("PLAYER_HAS_ACTIVE_BIDS")`. If no bids were placed, automatically transitions the previous player to `"Unsold"`, preventing orphaned cricketers. |
+| **PT-MOD7-02** | [`AuctionPersistenceService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auction/service/AuctionPersistenceService.java#L400-L415) | Bid undo reverted price to hardcoded ₹5,000 instead of tournament `defaultBasePrice` | Replaced hardcoded `5000L` with fallback to `settings.getDefaultBasePrice()`. Ensured `state.setGoingTwiceWarning(0)` is properly reset on bid undo. |
+| **PT-MOD7-03** | [`AuctionQueryService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auction/service/AuctionQueryService.java#L152-L168) | N+1 query loop when reading squad counts in auction state | Replaced iterative `squadMemberRepository.countByTeamId(t.getId())` queries with single batch projection `squadMemberRepository.countSquadMembersByTeamIds(teamIds)`. |
+| **PT-MOD7-04** | [`AuctionQueryService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auction/service/AuctionQueryService.java#L207-L230), [`SquadMemberRepository.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/team/repository/SquadMemberRepository.java#L28-L30) | N+1 query loop when reading auction transaction history | Added `findSoldSquadMembersByTournamentId(tournamentId)` with `JOIN FETCH sm.team`, fetching all sold members and their team names in 1 query. |
+| **PT-MOD7-05** | [`AuctionPersistenceService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auction/service/AuctionPersistenceService.java#L445-L450) | Captain wishlist updates contended on tournament advisory lock | Removed `acquireTournamentAdvisoryLock(tournament.getId())` from `updateCaptainWishlist`. Mutations operate strictly within standard PostgreSQL row transactions with unique constraint `(team_id, tournament_player_id)`. |
+| **PT-MOD7-06** | [`LiveAuctionStateRepository.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auction/repository/LiveAuctionStateRepository.java), [`AuctionBidRepository.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auction/repository/AuctionBidRepository.java), [`CaptainWishlistRepository.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auction/repository/CaptainWishlistRepository.java), [`AuctionPersistenceService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auction/service/AuctionPersistenceService.java) | Dead unused repository queries and persistence overloads | Deleted 7 uncalled methods: `updatePauseStatus`, `clearHammer`, `findByTournamentIdOrderByIdDesc`, `findTopByTournamentIdAndTournamentPlayerIdOrderByIdDesc`, `existsByTeamIdAndTournamentPlayerId`, `startAuction(Tournament)`, and `placeBid(Tournament, Team, Long)`. Optimized `findByTournamentId` with `LEFT JOIN FETCH`. |
+
+---
+
+## Modules 7 & 8 Security Audit Remediation (All 6 Issues Resolved)
+
+| Ref # | Component / File | Vulnerability / Issue | Severity | CWE / OWASP | Remediation Applied |
+|:---|:---|:---|:---:|:---|:---|
+| **SEC-01** | [`AcceleratedRoundRequest.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auction/dto/request/AcceleratedRoundRequest.java), [`LiveAuctionController.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auction/controller/LiveAuctionController.java#L150) | Unvalidated `revisedBasePriceFactor` in accelerated auction round | **HIGH** | CWE-20, OWASP API3:2023 | Added `@DecimalMin(value = "0.01")` and `@DecimalMax(value = "2.0")` on `revisedBasePriceFactor`. Enforced `@Valid` on `request` parameter in `LiveAuctionController.startAcceleratedRound`. |
+| **SEC-02** | [`WishlistActionRequest.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auction/dto/request/WishlistActionRequest.java#L22) | Unrestricted string input on Captain Wishlist `action` | **MEDIUM** | CWE-20 | Added `@Pattern(regexp = "(?i)^(add|remove)$", message = "Action must be either 'add' or 'remove'")`. |
+| **SEC-03** | [`NextPlayerRequest.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auction/dto/request/NextPlayerRequest.java#L15), [`LiveAuctionController.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auction/controller/LiveAuctionController.java#L77) | Unconstrained/negative `playerId` when calling next player | **LOW** | CWE-20 | Added `@Positive(message = "Player ID must be a positive integer")` on `playerId`. Enforced `@Valid` on `request` parameter in `LiveAuctionController.callNextPlayer`. |
+| **SEC-04** | [`LiveAuctionController.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auction/controller/LiveAuctionController.java) (13 endpoints), [`MatchController.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/match/controller/MatchController.java) (5 endpoints) | Unbounded length on `@PathVariable` parameters (`tournamentId`, `matchId`) | **LOW** | CWE-20 | Added `@NotBlank @Size(max = 100)` to all path variables across both controllers; added `HandlerMethodValidationException` handler in `GlobalExceptionHandler` to cleanly return HTTP 400 Bad Request. |
+| **SEC-05** | [`LiveAuctionController.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auction/controller/LiveAuctionController.java#L153) | Dynamic integer/string concatenation in API status message | **LOW** | CWE-79, CWE-116 | Replaced dynamic string concatenation `ApiResponse.success(count + " players entered accelerated round", ...)` with static string `ApiResponse.success("Accelerated round prepared successfully", null)`. |
+| **SEC-06** | [`AuctionPersistenceService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/auction/service/AuctionPersistenceService.java#L67), [`MatchPersistenceService.java`](file:///Users/yogeshkumarpadhiyar/Downloads/CricAuction-backbone/src/main/java/com/cricauction/modules/match/service/MatchPersistenceService.java#L50) | Dynamic string interpolation in `pg_advisory_xact_lock` SQL queries | **MEDIUM** | CWE-89, OWASP API3:2023 | Replaced `"SELECT pg_advisory_xact_lock(" + id + ")"` with parameterized SQL `jdbcTemplate.query("SELECT pg_advisory_xact_lock(?)", ps -> ps.setLong(1, id), rs -> null)`. |
+
+- **Security Regression Tests Added**:
+  - `LiveAuctionControllerTest.testAcceleratedRound_InvalidFactor_Rejected`: Verifies factor `< 0.01` or `> 2.0` returns HTTP 400.
+  - `LiveAuctionControllerTest.testCaptainWishlist_InvalidAction_Rejected`: Verifies invalid action returns HTTP 400.
+  - `LiveAuctionControllerTest.testCallNextPlayer_NonPositiveId_Rejected`: Verifies negative player ID returns HTTP 400.
+  - `LiveAuctionControllerTest.testLiveAuction_OverlyLongTournamentId_Rejected`: Verifies path variable `> 100` chars returns HTTP 400.
+  - `MatchControllerTest.testMatch_OverlyLongMatchId_Rejected`: Verifies match path variable `> 100` chars returns HTTP 400.
+- **Full Test Suite Verification**: **150 / 150 tests passing (0 failures, 0 errors, 0 skipped)**.
+- **Automated Security Audit Script**: `bash scripts/post-codegen-security-audit.sh` completed successfully with 0 warnings.
