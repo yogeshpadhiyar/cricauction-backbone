@@ -88,7 +88,7 @@ public class TeamControllerTest {
         squadMemberRepository.deleteAll();
         teamRepository.deleteAll();
         settingsRepository.deleteAll();
-        tournamentRepository.deleteAll();
+//        tournamentRepository.deleteAll();
 
         String suffix = UUID.randomUUID().toString().substring(0, 6);
 

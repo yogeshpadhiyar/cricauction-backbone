@@ -40,4 +40,22 @@ public interface MatchRepository extends JpaRepository<Match, Long> {
            "JOIN FETCH m.team2 " +
            "WHERE m.id = :id")
     Optional<Match> findByIdWithTeams(@Param("id") Long id);
+
+    @Query("SELECT m FROM Match m " +
+           "JOIN FETCH m.tournament " +
+           "JOIN FETCH m.team1 " +
+           "JOIN FETCH m.team2 " +
+           "WHERE (m.team1.id = :teamId OR m.team2.id = :teamId) " +
+           "AND m.status = com.cricauction.modules.match.entity.enums.MatchStatus.UPCOMING " +
+           "ORDER BY m.scheduledAt ASC")
+    List<Match> findUpcomingByTeamId(@Param("teamId") Long teamId);
+
+    @Query("SELECT m FROM Match m " +
+           "JOIN FETCH m.tournament " +
+           "JOIN FETCH m.team1 " +
+           "JOIN FETCH m.team2 " +
+           "WHERE (m.team1.id IN :teamIds OR m.team2.id IN :teamIds) " +
+           "AND m.status = com.cricauction.modules.match.entity.enums.MatchStatus.UPCOMING " +
+           "ORDER BY m.scheduledAt ASC")
+    List<Match> findUpcomingByTeamIds(@Param("teamIds") List<Long> teamIds);
 }

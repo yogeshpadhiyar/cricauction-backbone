@@ -41,4 +41,10 @@ public interface TeamRepository extends JpaRepository<Team, Long> {
 
     @Query("SELECT t FROM Team t LEFT JOIN FETCH t.squadMembers WHERE t.id = :id")
     Optional<Team> findByIdWithSquad(@Param("id") Long id);
+
+    @Query("SELECT COUNT(t) FROM Team t WHERE t.tournament.organizerId = :organizerId")
+    long countTotalTeamsByOrganizerId(@Param("organizerId") Long organizerId);
+
+    @Query("SELECT t FROM Team t JOIN FETCH t.tournament WHERE t.captainId = :captainId ORDER BY t.id DESC")
+    List<Team> findByCaptainIdWithTournamentOrderByIdDesc(@Param("captainId") Long captainId);
 }

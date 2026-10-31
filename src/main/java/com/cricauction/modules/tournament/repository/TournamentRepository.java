@@ -25,6 +25,10 @@ public interface TournamentRepository extends JpaRepository<Tournament, Long> {
 
     List<Tournament> findByOrganizerIdAndStatusOrderByCreatedAtDesc(Long organizerId, TournamentStatus status);
 
+    Optional<Tournament> findFirstByOrganizerIdAndStatusOrderByUpdatedAtDesc(Long organizerId, TournamentStatus status);
+
+    Optional<Tournament> findFirstByOrganizerIdOrderByCreatedAtDesc(Long organizerId);
+
     @Query("SELECT t FROM Tournament t LEFT JOIN FETCH t.settings WHERE t.publicId = :idOrSlug OR t.slug = :idOrSlug")
     Optional<Tournament> findByPublicIdOrSlugWithSettings(@Param("idOrSlug") String idOrSlug);
 
@@ -35,4 +39,7 @@ public interface TournamentRepository extends JpaRepository<Tournament, Long> {
     Optional<Tournament> findByIdWithSettings(@Param("id") Long id);
 
     long countByOrganizerId(Long organizerId);
+
+    @Query("SELECT t FROM Tournament t WHERE t.organizerId = :organizerId AND t.status NOT IN ('COMPLETED', 'ARCHIVED') ORDER BY t.auctionDate ASC NULLS LAST, t.id DESC")
+    List<Tournament> findUpcomingByOrganizerId(@Param("organizerId") Long organizerId);
 }

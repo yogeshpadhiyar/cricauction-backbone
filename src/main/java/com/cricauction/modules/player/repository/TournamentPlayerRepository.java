@@ -51,4 +51,10 @@ public interface TournamentPlayerRepository extends JpaRepository<TournamentPlay
 
     @Query("SELECT LOWER(tp.registeredRole), COUNT(tp) FROM TournamentPlayer tp WHERE tp.tournament.id = :tournamentId GROUP BY LOWER(tp.registeredRole)")
     List<Object[]> getRoleCountsByTournamentId(@Param("tournamentId") Long tournamentId);
+
+    @Query("SELECT COUNT(tp) FROM TournamentPlayer tp WHERE tp.tournament.organizerId = :organizerId")
+    long countTotalPlayersByOrganizerId(@Param("organizerId") Long organizerId);
+
+    @Query("SELECT tp FROM TournamentPlayer tp JOIN FETCH tp.tournament t LEFT JOIN FETCH t.settings WHERE tp.user.id = :userId ORDER BY tp.id DESC")
+    List<TournamentPlayer> findByUserIdWithTournamentOrderByIdDesc(@Param("userId") Long userId);
 }

@@ -27,4 +27,7 @@ public interface SquadMemberRepository extends JpaRepository<SquadMember, Long> 
 
     @Query("SELECT sm FROM SquadMember sm JOIN FETCH sm.team t WHERE t.tournament.id = :tournamentId AND sm.purchasePrice > 0 ORDER BY sm.id ASC")
     List<SquadMember> findSoldSquadMembersByTournamentId(@Param("tournamentId") Long tournamentId);
+
+    @Query("SELECT sm FROM SquadMember sm JOIN FETCH sm.team t JOIN FETCH t.tournament WHERE sm.playerUserId = :userId ORDER BY sm.id DESC")
+    List<SquadMember> findSquadMembersWithTeamAndTournamentByUserId(@Param("userId") Long userId);
 }
